@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tailrun</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="mark">tail<span>run</span></div>
+    <div class="sub">controller</div>
+  </div>
+  <div class="topbar-right">
+    <div class="stat-strip" id="statStrip"></div>
+    <div class="live-dot" id="liveDot"><i></i><span>live</span></div>
+    <button class="btn primary" id="newTaskBtn">+ New task</button>
+  </div>
+</div>
+
+<div class="shell" id="app"></div>
+
+<!-- New task modal -->
+<div class="modal-overlay" id="newTaskModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>New task</h3>
+      <button class="icon-btn" id="closeNewTask">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label for="taskName">Name</label>
+        <input id="taskName" type="text" placeholder="nightly-report">
+      </div>
+      <div class="field">
+        <label for="taskCommand">Command</label>
+        <input id="taskCommand" type="text" placeholder="python -m scripts.run --mode=full">
+      </div>
+      <div class="field">
+        <label for="taskEnv">Environment variables</label>
+        <textarea id="taskEnv" placeholder="KEY=value&#10;ANOTHER_KEY=value"></textarea>
+        <div class="hint">One KEY=value per line. Optional.</div>
+      </div>
+      <div class="form-error" id="newTaskError"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="cancelNewTask">Cancel</button>
+      <button class="btn primary" id="submitNewTask">Dispatch task</button>
+    </div>
+  </div>
+</div>
+
+<!-- Task details & logs modal -->
+<div class="modal-overlay" id="taskDetailsModal">
+  <div class="modal large">
+    <div class="modal-head">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <h3 id="detailsTaskTitle">Task Details</h3>
+        <span id="detailsTaskBadge"></span>
+      </div>
+      <button class="icon-btn" id="closeDetails">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="spec-grid" style="grid-template-columns: repeat(3, 1fr); margin-bottom: 16px;">
+        <div class="spec-cell">
+          <div class="k">Task ID</div>
+          <div class="v" id="detailsTaskId">—</div>
+        </div>
+        <div class="spec-cell">
+          <div class="k">Worker</div>
+          <div class="v" id="detailsTaskWorker">—</div>
+        </div>
+        <div class="spec-cell">
+          <div class="k">Status</div>
+          <div class="v" id="detailsTaskStatus" style="text-transform: capitalize;">—</div>
+        </div>
+      </div>
+
+      <div class="detail-block">
+        <div class="k">Command</div>
+        <div class="v" id="detailsTaskCommand">—</div>
+      </div>
+
+      <div class="detail-block" id="detailsEnvBlock" style="display:none;">
+        <div class="k">Environment Variables</div>
+        <div class="v" id="detailsTaskEnv">—</div>
+      </div>
+
+      <div style="margin-top: 20px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-dim);">Logs</span>
+          <div style="display:flex; align-items:center; gap:12px; font-size:11.5px; color:var(--text-dim);">
+            <label style="display:flex; align-items:center; gap:4px; cursor:pointer; font-weight:500;">
+              <input type="checkbox" id="autoScrollLogs" checked style="cursor:pointer;"> Auto-scroll
+            </label>
+            <button class="icon-btn" id="refreshLogsBtn" title="Refresh Logs" style="width:22px; height:22px; font-size:10px; display:flex; align-items:center; justify-content:center;">↻</button>
+          </div>
+        </div>
+        <div style="display:flex; gap:4px; margin-bottom:8px;">
+          <button class="log-tab active" data-tab-for="stdoutBody" style="padding:4px 12px; border:none; background:var(--bg-elevated); color:var(--text); cursor:pointer; border-radius:4px 4px 0 0; font-size:11px;">stdout</button>
+          <button class="log-tab" data-tab-for="stderrBody" style="padding:4px 12px; border:none; background:var(--bg-elevated); color:var(--text-dim); cursor:pointer; border-radius:4px 4px 0 0; font-size:11px;">stderr</button>
+        </div>
+        <pre class="logs" id="stdoutBody" style="display:block;">loading…</pre>
+        <pre class="logs" id="stderrBody" style="display:none;">loading…</pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/index.js"></script>
+</body>
+</html>
