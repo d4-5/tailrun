@@ -184,17 +184,11 @@ func getLinuxUsedMemory() (Bytes, error) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "MemTotal:") {
-			if _, err := fmt.Sscanf(line, "MemTotal: %d kB", &memTotal); err != nil {
-				continue
-			}
-		}
-		if strings.HasPrefix(line, "MemAvailable:") {
-			if _, err := fmt.Sscanf(line, "MemAvailable: %d kB", &memAvailable); err != nil {
-				if strings.HasPrefix(line, "MemFree:") {
-					fmt.Sscanf(line, "MemFree: %d kB", &memAvailable)
-				}
-				continue
-			}
+			_, _ = fmt.Sscanf(line, "MemTotal: %d kB", &memTotal)
+		} else if strings.HasPrefix(line, "MemAvailable:") {
+			_, _ = fmt.Sscanf(line, "MemAvailable: %d kB", &memAvailable)
+		} else if strings.HasPrefix(line, "MemFree:") && memAvailable == 0 {
+			_, _ = fmt.Sscanf(line, "MemFree: %d kB", &memAvailable)
 		}
 	}
 

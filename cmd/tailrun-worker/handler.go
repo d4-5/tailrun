@@ -65,6 +65,11 @@ func (h *Handler) HandleGetHealth(w http.ResponseWriter, r *http.Request) {
 		StorageUsed:     sys.StorageUsed,
 	}
 
+	buf, err := json.Marshal(resp)
+	if err != nil {
+		http.Error(w, "failed to encode health response", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_, _ = w.Write(buf)
 }

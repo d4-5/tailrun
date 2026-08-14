@@ -67,7 +67,7 @@ func main() {
 			AuthKey: *authKey,
 			Dir:     *tsnetDir,
 		}
-		defer ts.Close()
+		defer func() { _ = ts.Close() }()
 
 		if *tsnetLogs {
 			ts.Logf = func(format string, args ...any) {
@@ -82,7 +82,7 @@ func main() {
 		logger.Error("failed to create listener", "error", err)
 		os.Exit(1)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	runner := NewRunner(*controllerURL, logger)
 	h := NewHandler(runner)
@@ -160,7 +160,7 @@ func registerWorker(controllerURL, workerURL string, logger *slog.Logger) error 
 	if err != nil {
 		return fmt.Errorf("registration request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusCreated {
 		var respData RegisterWorkerResponse

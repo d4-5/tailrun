@@ -123,7 +123,7 @@ func (r *Runner) sendLogs(taskID int, stdout, stderr string, success bool) {
 		)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent {
 		respBody, err := io.ReadAll(resp.Body)
