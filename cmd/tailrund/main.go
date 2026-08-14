@@ -19,6 +19,7 @@ import (
 
 	"tailscale.com/tsnet"
 
+	"github.com/n9cw/tailrun/internal/broker"
 	"github.com/n9cw/tailrun/internal/handler"
 	"github.com/n9cw/tailrun/internal/pool"
 	"github.com/n9cw/tailrun/internal/scheduler"
@@ -53,16 +54,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	p := pool.New(logger)
-	s := scheduler.New(p, logger)
+	eb := broker.New(logger)
+	p := pool.New(eb, logger)
+	s := scheduler.New(p, eb, logger)
 
 	taskHandler := handler.NewTaskHandler(s)
 	workerHandler := handler.NewWorkerHandler(p)
+	staticHandler := handler.NewStaticHandler(web.FS)
 
 	mux := http.NewServeMux()
-	mux.Handle("/", http.FileServer(http.FS(web.FS)))
+	staticHandler.RegisterRoutes(mux)
 	taskHandler.RegisterRoutes(mux)
 	workerHandler.RegisterRoutes(mux)
+	mux.HandleFunc("GET /api/events", eb.Handler)
 
 	var ln net.Listener
 	var err error
@@ -75,7 +79,7 @@ func main() {
 			Hostname: *hostname,
 			Dir:      *tsnetDir,
 		}
-		defer ts.Close()
+		defer func() { _ = ts.Close() }()
 
 		if *tsnetLogs {
 			// tsnet writes to the stdlib log package
@@ -95,12 +99,14 @@ func main() {
 		logger.Error("failed to create listener", "error", err)
 		os.Exit(1)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	server := &http.Server{
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
+		Handler:     mux,
+		ReadTimeout: 5 * time.Second,
+		// WriteTimeout must be > broker's heartbeat ticker interval
+		// to prevent the server from timing out long-lived SSE connections.
+		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  5 * time.Second,
 	}
 
