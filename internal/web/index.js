@@ -2,10 +2,9 @@
   "use strict";
 
   const API = "/api";
-  const REFRESH_MS = 1000;
   let cache = { workers: [], tasks: [] };
   let activeLogTaskId = null;
-  let logIntervalId = null;
+  let eventSource = null;
 
   function fmtBytes(v){
     if (typeof v !== "number") return String(v);
@@ -385,10 +384,6 @@
 
   async function showTaskDetails(taskId) {
     activeLogTaskId = taskId;
-    if (logIntervalId) {
-      clearInterval(logIntervalId);
-      logIntervalId = null;
-    }
 
     const overlay = document.getElementById("taskDetailsModal");
     document.getElementById("logsBody").textContent = "loading logs…";
@@ -427,33 +422,6 @@
       }
 
       await fetchTaskLogs(taskId);
-
-      const normStatus = normalizeTaskStatus(task.status);
-      if (normStatus === "queued" || normStatus === "running") {
-        logIntervalId = setInterval(async () => {
-          await fetchTaskLogs(taskId);
-          try {
-            const updatedTask = await fetchJSON("/tasks/" + taskId);
-            document.getElementById("detailsTaskStatus").textContent = updatedTask.status;
-            detailsTaskBadge.className = "badge " + normalizeTaskStatus(updatedTask.status);
-            detailsTaskBadge.innerHTML = `<i></i>${updatedTask.status}`;
-
-            const updatedWorkerVal = updatedTask.workerId != null
-              ? (workerById[updatedTask.workerId]?.hostname || ("#" + updatedTask.workerId))
-              : "Unassigned";
-            document.getElementById("detailsTaskWorker").textContent = updatedWorkerVal;
-
-            const updatedNorm = normalizeTaskStatus(updatedTask.status);
-            if (updatedNorm !== "queued" && updatedNorm !== "running") {
-              clearInterval(logIntervalId);
-              logIntervalId = null;
-              await loadAll();
-              renderStatStrip();
-              await route();
-            }
-          } catch(e){}
-        }, 2000);
-      }
     } catch(err) {
       console.error("Error loading task details:", err);
       document.getElementById("logsBody").textContent = "Couldn't load task details: " + err.message;
@@ -463,10 +431,6 @@
   function closeDetails() {
     document.getElementById("taskDetailsModal").classList.remove("show");
     activeLogTaskId = null;
-    if (logIntervalId) {
-      clearInterval(logIntervalId);
-      logIntervalId = null;
-    }
   }
 
   document.getElementById("closeDetails").addEventListener("click", closeDetails);
@@ -555,10 +519,35 @@
     }
   }
 
+  let eventBuffer = [];
+  let isLoaded = false;
+  let lastSequence = null;
+
   async function refresh(){
-    await loadAll();
-    renderStatStrip();
-    await route();
+    isLoaded = false;
+    eventBuffer = [];
+    lastSequence = null;
+    try {
+      await loadAll();
+      
+      const toProcess = eventBuffer;
+      eventBuffer = [];
+      
+      for (const ev of toProcess) {
+        if (lastSequence !== null && ev.sequence !== lastSequence + 1) {
+          console.warn(`Sequence gap in buffer: expected ${lastSequence + 1}, got ${ev.sequence}. Reloading...`);
+          setTimeout(refresh, 500);
+          return;
+        }
+        lastSequence = ev.sequence;
+        applyServerEvent(ev);
+      }
+      
+      isLoaded = true;
+      updateUI();
+    } catch (e) {
+      console.error("Failed to refresh state:", e);
+    }
   }
 
   window.addEventListener("hashchange", route);
@@ -569,12 +558,130 @@
     }
   });
 
-  refresh();
-  setInterval(async () => {
-    await loadAll();
+  function applyServerEvent(ev) {
+    const data = ev.data;
+    switch (ev.type) {
+      case "worker_registered": {
+        const idx = cache.workers.findIndex(w => w.id === data.id);
+        if (idx > -1) {
+          cache.workers[idx] = data;
+        } else {
+          cache.workers.push(data);
+        }
+        break;
+      }
+      case "worker_updated": {
+        const idx = cache.workers.findIndex(w => w.id === data.id);
+        if (idx > -1) {
+          Object.assign(cache.workers[idx], data);
+        }
+        break;
+      }
+      case "task_created": {
+        const idx = cache.tasks.findIndex(t => t.id === data.id);
+        if (idx > -1) {
+          cache.tasks[idx] = data;
+        } else {
+          cache.tasks.push(data);
+        }
+        break;
+      }
+      case "task_updated": {
+        const idx = cache.tasks.findIndex(t => t.id === data.id);
+        if (idx > -1) {
+          Object.assign(cache.tasks[idx], data);
+
+          if (activeLogTaskId && String(activeLogTaskId) === String(data.id)) {
+            const task = cache.tasks[idx];
+            document.getElementById("detailsTaskStatus").textContent = task.status;
+            const detailsTaskBadge = document.getElementById("detailsTaskBadge");
+            if (detailsTaskBadge) {
+              detailsTaskBadge.className = "badge " + normalizeTaskStatus(task.status);
+              detailsTaskBadge.innerHTML = `<i></i>${task.status}`;
+            }
+            const workerById = Object.fromEntries(cache.workers.map(w => [w.id, w]));
+            const updatedWorkerVal = task.workerId != null
+              ? (workerById[task.workerId]?.hostname || ("#" + task.workerId))
+              : "Unassigned";
+            document.getElementById("detailsTaskWorker").textContent = updatedWorkerVal;
+          }
+        }
+        break;
+      }
+      case "task_logs_updated": {
+        if (activeLogTaskId && String(activeLogTaskId) === String(data.taskId)) {
+          const stdoutBody = document.getElementById("stdoutBody");
+          const stderrBody = document.getElementById("stderrBody");
+          const stdout = data.stdout || "(no stdout output)";
+          const stderr = data.stderr || "(no stderr output)";
+          if (stdoutBody) stdoutBody.textContent = stdout;
+          if (stderrBody) stderrBody.textContent = stderr;
+
+          const autoScroll = document.getElementById("autoScrollLogs").checked;
+          const activeTab = document.querySelector(".log-tab.active");
+          if (autoScroll && activeTab) {
+            const targetId = activeTab.dataset.tabFor;
+            const targetEl = document.getElementById(targetId);
+            if (targetEl) {
+              targetEl.scrollTop = targetEl.scrollHeight;
+            }
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  function handleServerEvent(ev) {
+    applyServerEvent(ev);
+    updateUI();
+  }
+
+  function updateUI() {
     renderStatStrip();
     if (!newTaskModal.classList.contains("show")) {
-      await route();
+      route();
     }
-  }, REFRESH_MS);
+  }
+
+  function setupEventSource() {
+    if (eventSource) {
+      eventSource.close();
+    }
+    eventSource = new EventSource("/api/events");
+
+    eventSource.addEventListener("open", () => {
+      console.log("SSE connection opened");
+      document.getElementById("liveDot").classList.remove("offline");
+      document.getElementById("liveDot").querySelector("span").textContent = "live";
+      refresh();
+    });
+
+    eventSource.addEventListener("error", (e) => {
+      console.error("SSE connection error:", e);
+      document.getElementById("liveDot").classList.add("offline");
+      document.getElementById("liveDot").querySelector("span").textContent = "offline";
+    });
+
+    eventSource.addEventListener("message", (e) => {
+      try {
+        const ev = JSON.parse(e.data);
+        if (!isLoaded) {
+          eventBuffer.push(ev);
+        } else {
+          if (lastSequence !== null && ev.sequence !== lastSequence + 1) {
+            console.warn(`Sequence gap: expected ${lastSequence + 1}, got ${ev.sequence}. Reloading...`);
+            refresh();
+            return;
+          }
+          lastSequence = ev.sequence;
+          handleServerEvent(ev);
+        }
+      } catch (err) {
+        console.error("Error parsing event:", err);
+      }
+    });
+  }
+
+  setupEventSource();
 })();

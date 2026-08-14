@@ -13,51 +13,14 @@ type Pool interface {
 	ReleaseWorker(id int)
 }
 
+type Broker interface {
+	Publish(eventType string, data any)
+}
+
 var (
 	ErrTaskNotFound     = errors.New("task not found")
 	ErrTaskLogsNotFound = errors.New("task logs not found")
 )
-
-type TaskStatus int
-
-const (
-	Waiting TaskStatus = iota
-	Executing
-	Finished
-	Failed
-)
-
-func (s TaskStatus) String() (string, error) {
-	switch s {
-	case Waiting:
-		return "waiting", nil
-	case Executing:
-		return "executing", nil
-	case Finished:
-		return "finished", nil
-	case Failed:
-		return "failed", nil
-	default:
-		return "", errors.New("unknown task status")
-	}
-}
-
-type Task struct {
-	ID       int
-	WorkerID *int
-	Name     string
-	Command  string
-	Status   TaskStatus
-	EnvVars  map[string]string
-	Stdout   string
-	Stderr   string
-}
-
-type NewTask struct {
-	Name    string
-	Command string
-	EnvVars map[string]string
-}
 
 type addTaskReq struct {
 	newTask NewTask
@@ -65,7 +28,7 @@ type addTaskReq struct {
 }
 
 type getTasksReq struct {
-	reply chan []Task
+	reply chan []TaskInfo
 }
 
 type getTaskReq struct {
@@ -74,7 +37,7 @@ type getTaskReq struct {
 }
 
 type getTaskResult struct {
-	task Task
+	task TaskInfo
 	err  error
 }
 
@@ -121,9 +84,10 @@ type Scheduler struct {
 	workerReadyCh    chan workerReady
 	dispatchResultCh chan dispatchResult
 	waitingForWorker bool
+	broker           Broker
 }
 
-func New(pool Pool, logger *slog.Logger) *Scheduler {
+func New(pool Pool, broker Broker, logger *slog.Logger) *Scheduler {
 	s := &Scheduler{
 		pool:             pool,
 		logger:           logger,
@@ -137,6 +101,7 @@ func New(pool Pool, logger *slog.Logger) *Scheduler {
 		tasks:            make(map[int]*Task),
 		queue:            make([]int, 0),
 		nextID:           1,
+		broker:           broker,
 	}
 	return s
 }
@@ -176,15 +141,46 @@ func (s *Scheduler) handleAddTask(r addTaskReq) {
 	}
 	s.tasks[id] = task
 	s.queue = append(s.queue, id)
+
+	s.broker.Publish(EventTaskCreated, TaskCreatedEvent{
+		ID:      id,
+		Name:    task.Name,
+		Command: task.Command,
+		EnvVars: task.EnvVars,
+		Status:  task.Status.String(),
+	})
 	r.reply <- id
 
 	s.tryRequestWorker()
 }
 
 func (s *Scheduler) handleGetTasks(r getTasksReq) {
-	tasks := make([]Task, 0, len(s.tasks))
+	positionMap := make(map[int]int, len(s.queue))
+	for i, id := range s.queue {
+		positionMap[id] = i + 1
+	}
+
+	tasks := make([]TaskInfo, 0, len(s.tasks))
 	for _, t := range s.tasks {
-		tasks = append(tasks, *t)
+		info := TaskInfo{
+			ID:       t.ID,
+			WorkerID: t.WorkerID,
+			Name:     t.Name,
+			Command:  t.Command,
+			Status:   t.Status,
+			EnvVars:  t.EnvVars,
+			Stdout:   t.Stdout,
+			Stderr:   t.Stderr,
+		}
+		if t.Status == Waiting {
+			if pos, ok := positionMap[t.ID]; ok {
+				info.QueuePosition = &pos
+			} else {
+				s.logger.Warn("task has Waiting status but not in queue",
+					"task_id", t.ID)
+			}
+		}
+		tasks = append(tasks, info)
 	}
 	r.reply <- tasks
 }
@@ -195,7 +191,29 @@ func (s *Scheduler) handleGetTask(r getTaskReq) {
 		r.reply <- getTaskResult{err: ErrTaskNotFound}
 		return
 	}
-	r.reply <- getTaskResult{task: *t}
+
+	info := TaskInfo{
+		ID:       t.ID,
+		WorkerID: t.WorkerID,
+		Name:     t.Name,
+		Command:  t.Command,
+		Status:   t.Status,
+		EnvVars:  t.EnvVars,
+		Stdout:   t.Stdout,
+		Stderr:   t.Stderr,
+	}
+
+	if t.Status == Waiting {
+		for i, id := range s.queue {
+			if id == r.id {
+				pos := i + 1
+				info.QueuePosition = &pos
+				break
+			}
+		}
+	}
+
+	r.reply <- getTaskResult{task: info}
 }
 
 func (s *Scheduler) handleGetTaskLogs(r getTaskLogsReq) {
@@ -226,6 +244,13 @@ func (s *Scheduler) handleAddTaskLogs(r addTaskLogsReq) {
 	} else {
 		s.logger.Warn("task completed with no worker assigned", "task_id", r.id)
 	}
+
+	s.broker.Publish(EventTaskUpdated, TaskUpdatedEvent{
+		ID:       t.ID,
+		Status:   t.Status.String(),
+		WorkerID: t.WorkerID,
+	})
+
 	r.reply <- nil
 
 	s.tryRequestWorker()
@@ -251,6 +276,11 @@ func (s *Scheduler) handleDispatchResult(r dispatchResult) {
 			t.Status = Waiting
 			t.WorkerID = nil
 			s.queue = append(s.queue, r.taskID)
+			s.broker.Publish(EventTaskUpdated, TaskUpdatedEvent{
+				ID:       t.ID,
+				Status:   t.Status.String(),
+				WorkerID: t.WorkerID,
+			})
 		} else {
 			s.logger.Warn("failed to find task for dispatch result", "task_id", r.taskID)
 		}
@@ -293,6 +323,11 @@ func (s *Scheduler) dispatchTask(w pool.Worker) {
 	workerID := w.ID()
 	task.Status = Executing
 	task.WorkerID = &workerID
+	s.broker.Publish(EventTaskUpdated, TaskUpdatedEvent{
+		ID:       task.ID,
+		Status:   task.Status.String(),
+		WorkerID: task.WorkerID,
+	})
 
 	taskInfo := pool.Task{
 		ID:      task.ID,
@@ -316,13 +351,13 @@ func (s *Scheduler) AddTask(newTask NewTask) int {
 	return <-reply
 }
 
-func (s *Scheduler) GetTasks() []Task {
-	reply := make(chan []Task, 1)
+func (s *Scheduler) GetTasks() []TaskInfo {
+	reply := make(chan []TaskInfo, 1)
 	s.getTasksCh <- getTasksReq{reply: reply}
 	return <-reply
 }
 
-func (s *Scheduler) GetTask(id int) (Task, error) {
+func (s *Scheduler) GetTask(id int) (TaskInfo, error) {
 	reply := make(chan getTaskResult, 1)
 	s.getTaskCh <- getTaskReq{id: id, reply: reply}
 	res := <-reply

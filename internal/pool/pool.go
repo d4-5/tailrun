@@ -1,11 +1,8 @@
 package pool
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -15,101 +12,8 @@ var (
 	ErrWorkerNotFound = errors.New("worker not found")
 )
 
-type Worker interface {
-	Execute(task Task) error
-	ID() int
-}
-
-type Task struct {
-	ID      int               `json:"id"`
-	Command string            `json:"command"`
-	EnvVars map[string]string `json:"envVars"`
-}
-
-type WorkerStatus int
-
-const (
-	Available WorkerStatus = iota
-	Busy
-)
-
-func (s WorkerStatus) String() (string, error) {
-	switch s {
-	case Available:
-		return "available", nil
-	case Busy:
-		return "busy", nil
-	default:
-		return "", errors.New("unknown worker status")
-	}
-}
-
-type Bytes uint64
-
-type worker struct {
-	id         int
-	url        string
-	hostname   string
-	status     WorkerStatus
-	cpuCores   int
-	os         string
-	memory     Bytes
-	storage    Bytes
-	httpClient *http.Client
-}
-
-type NewWorker struct {
-	URL      string
-	Hostname string
-	CPUCores int
-	OS       string
-	Memory   Bytes
-	Storage  Bytes
-}
-
-type WorkerInfo struct {
-	ID       int
-	URL      string
-	Hostname string
-	Status   WorkerStatus
-	CPU      int
-	OS       string
-	Memory   Bytes
-	Storage  Bytes
-}
-
-func (w *worker) Execute(task Task) error {
-	body, err := json.Marshal(task)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequest(
-		http.MethodPost,
-		w.url+"/tasks",
-		bytes.NewReader(body),
-	)
-	if err != nil {
-		return err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := w.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusAccepted {
-		return fmt.Errorf("worker returned status %d", resp.StatusCode)
-	}
-
-	return nil
-}
-
-func (w *worker) ID() int {
-	return w.id
+type Broker interface {
+	Publish(eventType string, data any)
 }
 
 type addWorkerReq struct {
@@ -151,9 +55,10 @@ type Pool struct {
 	waitQueue            []chan Worker
 	httpClient           *http.Client
 	logger               *slog.Logger
+	broker               Broker
 }
 
-func New(logger *slog.Logger) *Pool {
+func New(broker Broker, logger *slog.Logger) *Pool {
 	p := &Pool{
 		workers:              make(map[int]*worker),
 		addWorkerCh:          make(chan addWorkerReq, 50),
@@ -163,6 +68,7 @@ func New(logger *slog.Logger) *Pool {
 		releaseWorkerCh:      make(chan releaseWorkerReq, 50),
 		httpClient:           &http.Client{Timeout: 10 * time.Second},
 		logger:               logger,
+		broker:               broker,
 	}
 
 	return p
@@ -204,6 +110,17 @@ func (p *Pool) handleAddWorker(r addWorkerReq) {
 	p.workers[id] = w
 	p.workersQueue = append(p.workersQueue, id)
 
+	p.broker.Publish(EventWorkerRegistered, WorkerRegisteredEvent{
+		ID:       w.id,
+		URL:      w.url,
+		Hostname: w.hostname,
+		Status:   w.status.String(),
+		CPUCores: w.cpuCores,
+		OS:       w.os,
+		Memory:   w.memory,
+		Storage:  w.storage,
+	})
+
 	p.trySendWorker()
 	r.reply <- id
 }
@@ -216,7 +133,7 @@ func (p *Pool) handleGetWorkers(r getWorkersReq) {
 			URL:      w.url,
 			Hostname: w.hostname,
 			Status:   w.status,
-			CPU:      w.cpuCores,
+			CPUCores: w.cpuCores,
 			OS:       w.os,
 			Memory:   w.memory,
 			Storage:  w.storage,
@@ -237,7 +154,7 @@ func (p *Pool) handleGetWorker(r getWorkerReq) {
 			URL:      w.url,
 			Hostname: w.hostname,
 			Status:   w.status,
-			CPU:      w.cpuCores,
+			CPUCores: w.cpuCores,
 			OS:       w.os,
 			Memory:   w.memory,
 			Storage:  w.storage,
@@ -264,6 +181,10 @@ func (p *Pool) handleReleaseWorker(r releaseWorkerReq) {
 	}
 
 	w.status = Available
+	p.broker.Publish(EventWorkerUpdated, WorkerUpdatedEvent{
+		ID:     w.id,
+		Status: w.status.String(),
+	})
 	p.workersQueue = append(p.workersQueue, w.id)
 	p.trySendWorker()
 }
@@ -278,6 +199,10 @@ func (p *Pool) trySendWorker() {
 
 		w := p.workers[id]
 		w.status = Busy
+		p.broker.Publish(EventWorkerUpdated, WorkerUpdatedEvent{
+			ID:     w.id,
+			Status: w.status.String(),
+		})
 		replyCh <- w
 	}
 }

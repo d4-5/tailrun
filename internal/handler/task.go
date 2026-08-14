@@ -11,8 +11,8 @@ import (
 
 type Schedule interface {
 	AddTask(job scheduler.NewTask) int
-	GetTask(id int) (scheduler.Task, error)
-	GetTasks() []scheduler.Task
+	GetTask(id int) (scheduler.TaskInfo, error)
+	GetTasks() []scheduler.TaskInfo
 	GetTaskLogs(id int) (stdout, stderr string, err error)
 	AddTaskLogs(id int, stdout, stderr string, success bool) error
 }
@@ -28,12 +28,13 @@ type CreateTaskResponse struct {
 }
 
 type TaskResponse struct {
-	ID       int               `json:"id"`
-	Name     string            `json:"name"`
-	Command  string            `json:"command"`
-	Status   string            `json:"status"`
-	WorkerID *int              `json:"workerId,omitempty"`
-	EnvVars  map[string]string `json:"envVars,omitempty"`
+	ID            int               `json:"id"`
+	Name          string            `json:"name"`
+	Command       string            `json:"command"`
+	Status        string            `json:"status"`
+	WorkerID      *int              `json:"workerId,omitempty"`
+	EnvVars       map[string]string `json:"envVars,omitempty"`
+	QueuePosition *int              `json:"queuePosition,omitempty"`
 }
 
 type AddTaskLogsRequest struct {
@@ -93,10 +94,14 @@ func (h *TaskHandler) HandleGetTasks(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]TaskResponse, 0, len(tasks))
 	for _, t := range tasks {
-		tr, err := taskToResponse(t)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "unknown task status")
-			return
+		tr := TaskResponse{
+			ID:            t.ID,
+			Name:          t.Name,
+			Command:       t.Command,
+			Status:        t.Status.String(),
+			WorkerID:      t.WorkerID,
+			EnvVars:       t.EnvVars,
+			QueuePosition: t.QueuePosition,
 		}
 		resp = append(resp, tr)
 	}
@@ -121,12 +126,15 @@ func (h *TaskHandler) HandleGetTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tr, err := taskToResponse(task)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "unknown task status")
-		return
+	tr := TaskResponse{
+		ID:            task.ID,
+		Name:          task.Name,
+		Command:       task.Command,
+		Status:        task.Status.String(),
+		WorkerID:      task.WorkerID,
+		EnvVars:       task.EnvVars,
+		QueuePosition: task.QueuePosition,
 	}
-
 	writeJSON(w, http.StatusOK, tr)
 }
 
@@ -175,26 +183,15 @@ func (h *TaskHandler) HandleGetTaskLogs(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, TaskLogsResponse{Stdout: stdout, Stderr: stderr})
 }
 
-func taskToResponse(t scheduler.Task) (TaskResponse, error) {
-	status, err := t.Status.String()
-	if err != nil {
-		return TaskResponse{}, err
-	}
-
-	return TaskResponse{
-		ID:       t.ID,
-		Name:     t.Name,
-		Command:  t.Command,
-		Status:   status,
-		WorkerID: t.WorkerID,
-		EnvVars:  t.EnvVars,
-	}, nil
-}
-
 func writeJSON(w http.ResponseWriter, status int, v any) {
+	buf, err := json.Marshal(v)
+	if err != nil {
+		http.Error(w, "failed to encode response", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	_, _ = w.Write(buf)
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {

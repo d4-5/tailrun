@@ -102,10 +102,15 @@ func (h *WorkerHandler) HandleGetWorkers(w http.ResponseWriter, r *http.Request)
 
 	resp := make([]WorkerResponse, 0, len(workers))
 	for _, worker := range workers {
-		wr, err := workerToResponse(worker)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "unknown worker state")
-			return
+		wr := WorkerResponse{
+			ID:       worker.ID,
+			URL:      worker.URL,
+			Hostname: worker.Hostname,
+			Status:   worker.Status.String(),
+			CPUCores: worker.CPUCores,
+			OS:       worker.OS,
+			Memory:   worker.Memory,
+			Storage:  worker.Storage,
 		}
 		resp = append(resp, wr)
 	}
@@ -130,29 +135,15 @@ func (h *WorkerHandler) HandleGetWorker(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	wr, err := workerToResponse(worker)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "unknown worker state")
-		return
+	wr := WorkerResponse{
+		ID:       worker.ID,
+		URL:      worker.URL,
+		Hostname: worker.Hostname,
+		Status:   worker.Status.String(),
+		CPUCores: worker.CPUCores,
+		OS:       worker.OS,
+		Memory:   worker.Memory,
+		Storage:  worker.Storage,
 	}
-
 	writeJSON(w, http.StatusOK, wr)
-}
-
-func workerToResponse(w pool.WorkerInfo) (WorkerResponse, error) {
-	status, err := w.Status.String()
-	if err != nil {
-		return WorkerResponse{}, err
-	}
-
-	return WorkerResponse{
-		ID:       w.ID,
-		URL:      w.URL,
-		Hostname: w.Hostname,
-		Status:   status,
-		CPUCores: w.CPU,
-		OS:       w.OS,
-		Memory:   w.Memory,
-		Storage:  w.Storage,
-	}, nil
 }
