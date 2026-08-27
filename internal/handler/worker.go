@@ -16,12 +16,12 @@ type Workers interface {
 }
 
 type RegisterWorkerRequest struct {
-	URL      string     `json:"url"`
-	Hostname string     `json:"hostname"`
-	CPUCores int        `json:"cpuCores"`
-	OS       string     `json:"os"`
-	Memory   pool.Bytes `json:"memory"`
-	Storage  pool.Bytes `json:"storage"`
+	URL      string      `json:"url"`
+	Hostname string      `json:"hostname"`
+	CPUCores int         `json:"cpuCores"`
+	OS       string      `json:"os"`
+	Memory   *pool.Bytes `json:"memory,omitempty"`
+	Storage  *pool.Bytes `json:"storage,omitempty"`
 }
 
 type RegisterWorkerResponse struct {
@@ -29,14 +29,14 @@ type RegisterWorkerResponse struct {
 }
 
 type WorkerResponse struct {
-	ID       int        `json:"id"`
-	URL      string     `json:"url"`
-	Hostname string     `json:"hostname"`
-	Status   string     `json:"status"`
-	CPUCores int        `json:"cpuCores"`
-	OS       string     `json:"os"`
-	Memory   pool.Bytes `json:"memory"`
-	Storage  pool.Bytes `json:"storage"`
+	ID       int         `json:"id"`
+	URL      string      `json:"url"`
+	Hostname string      `json:"hostname"`
+	Status   string      `json:"status"`
+	CPUCores int         `json:"cpuCores"`
+	OS       string      `json:"os"`
+	Memory   *pool.Bytes `json:"memory,omitempty"`
+	Storage  *pool.Bytes `json:"storage,omitempty"`
 }
 
 type WorkerHandler struct {
@@ -76,11 +76,11 @@ func (h *WorkerHandler) HandleRegisterWorker(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "number of cpu cores must be greater than 0")
 		return
 	}
-	if req.Memory == 0 {
+	if req.Memory != nil && *req.Memory <= 0 {
 		writeError(w, http.StatusBadRequest, "memory must be greater than 0 bytes")
 		return
 	}
-	if req.Storage == 0 {
+	if req.Storage != nil && *req.Storage <= 0 {
 		writeError(w, http.StatusBadRequest, "storage must be greater than 0 bytes")
 		return
 	}

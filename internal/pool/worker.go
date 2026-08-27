@@ -24,8 +24,8 @@ type WorkerRegisteredEvent struct {
 	Status   string `json:"status"`
 	CPUCores int    `json:"cpuCores"`
 	OS       string `json:"os"`
-	Memory   Bytes  `json:"memory"`
-	Storage  Bytes  `json:"storage"`
+	Memory   *Bytes `json:"memory,omitempty"`
+	Storage  *Bytes `json:"storage,omitempty"`
 }
 
 type Worker interface {
@@ -66,8 +66,8 @@ type worker struct {
 	status     WorkerStatus
 	cpuCores   int
 	os         string
-	memory     Bytes
-	storage    Bytes
+	memory     *Bytes
+	storage    *Bytes
 	httpClient *http.Client
 }
 
@@ -76,8 +76,8 @@ type NewWorker struct {
 	Hostname string
 	CPUCores int
 	OS       string
-	Memory   Bytes
-	Storage  Bytes
+	Memory   *Bytes
+	Storage  *Bytes
 }
 
 type WorkerInfo struct {
@@ -87,8 +87,8 @@ type WorkerInfo struct {
 	Status   WorkerStatus
 	CPUCores int
 	OS       string
-	Memory   Bytes
-	Storage  Bytes
+	Memory   *Bytes
+	Storage  *Bytes
 }
 
 func (w *worker) Execute(task Task) error {
