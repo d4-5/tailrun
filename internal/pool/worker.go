@@ -44,6 +44,7 @@ type WorkerStatus int
 const (
 	Available WorkerStatus = iota
 	Busy
+	Dead
 )
 
 func (s WorkerStatus) String() string {
@@ -52,6 +53,8 @@ func (s WorkerStatus) String() string {
 		return "available"
 	case Busy:
 		return "busy"
+	case Dead:
+		return "dead"
 	default:
 		panic(fmt.Sprintf("pool: unknown WorkerStatus value: %d", s))
 	}
@@ -60,14 +63,22 @@ func (s WorkerStatus) String() string {
 type Bytes uint64
 
 type worker struct {
-	id         int
-	url        string
-	hostname   string
-	status     WorkerStatus
-	cpuCores   int
-	os         string
-	memory     *Bytes
-	storage    *Bytes
+	id       int
+	url      string
+	hostname string
+	status   WorkerStatus
+	cpuCores int
+	os       string
+	memory   *Bytes
+	storage  *Bytes
+
+	healthCheckInFlight bool
+	failedHealthChecks  int
+
+	cpuUsagePercent []float64
+	memoryUsed      []Bytes
+	storageUsed     []Bytes
+
 	httpClient *http.Client
 }
 

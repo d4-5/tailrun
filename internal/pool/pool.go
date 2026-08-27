@@ -2,7 +2,9 @@ package pool
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -43,6 +45,19 @@ type releaseWorkerReq struct {
 	id int
 }
 
+type healthCheckResult struct {
+	workerID int
+	health   HealthResponse
+	err      error
+}
+
+type HealthResponse struct {
+	Status          string   `json:"status"`
+	CPUUsagePercent *float64 `json:"cpuUsagePercent,omitempty"`
+	MemoryUsed      *Bytes   `json:"memoryUsed,omitempty"`
+	StorageUsed     *Bytes   `json:"storageUsed,omitempty"`
+}
+
 type Pool struct {
 	workers              map[int]*worker
 	nextID               int
@@ -51,6 +66,7 @@ type Pool struct {
 	getWorkerCh          chan getWorkerReq
 	getAvailableWorkerCh chan getAvailableWorkerReq
 	releaseWorkerCh      chan releaseWorkerReq
+	healthCheckResultCh  chan healthCheckResult
 	workersQueue         []int
 	waitQueue            []chan Worker
 	httpClient           *http.Client
@@ -66,6 +82,7 @@ func New(broker Broker, logger *slog.Logger) *Pool {
 		getWorkerCh:          make(chan getWorkerReq, 50),
 		getAvailableWorkerCh: make(chan getAvailableWorkerReq, 50),
 		releaseWorkerCh:      make(chan releaseWorkerReq, 50),
+		healthCheckResultCh:  make(chan healthCheckResult, 50),
 		httpClient:           &http.Client{Timeout: 10 * time.Second},
 		logger:               logger,
 		broker:               broker,
@@ -75,8 +92,13 @@ func New(broker Broker, logger *slog.Logger) *Pool {
 }
 
 func (p *Pool) Run(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
+		case <-ticker.C:
+			p.startHealthChecks()
 		case r := <-p.addWorkerCh:
 			p.handleAddWorker(r)
 		case r := <-p.getWorkersCh:
@@ -87,9 +109,104 @@ func (p *Pool) Run(ctx context.Context) {
 			p.handleGetAvailableWorker(r)
 		case r := <-p.releaseWorkerCh:
 			p.handleReleaseWorker(r)
+		case r := <-p.healthCheckResultCh:
+			p.handleHealthCheckResult(r)
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+func (p *Pool) startHealthChecks() {
+	for _, w := range p.workers {
+		if w.healthCheckInFlight {
+			continue
+		}
+		w.healthCheckInFlight = true
+
+		go p.checkWorkerHealth(*w)
+	}
+}
+
+func (p *Pool) checkWorkerHealth(w worker) {
+	var health HealthResponse
+
+	req, err := http.NewRequest(
+		http.MethodGet,
+		w.url+"/health",
+		nil,
+	)
+	if err != nil {
+		p.healthCheckResultCh <- healthCheckResult{workerID: w.id, health: health, err: err}
+		return
+	}
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		p.healthCheckResultCh <- healthCheckResult{workerID: w.id, health: health, err: err}
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		err = fmt.Errorf("worker returned health status %d", resp.StatusCode)
+		p.healthCheckResultCh <- healthCheckResult{workerID: w.id, health: health, err: err}
+		return
+
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		err = fmt.Errorf("decode health response: %w", err)
+		p.healthCheckResultCh <- healthCheckResult{workerID: w.id, health: health, err: err}
+		return
+	}
+
+	p.healthCheckResultCh <- healthCheckResult{workerID: w.id, health: health, err: nil}
+}
+
+func (p *Pool) handleHealthCheckResult(r healthCheckResult) {
+	w, ok := p.workers[r.workerID]
+	if !ok {
+		p.logger.Warn("received healthcheck result for unknown worker",
+			"worker_id", r.workerID,
+			"error", r.err,
+		)
+		return
+	}
+
+	w.healthCheckInFlight = false
+	if r.err != nil {
+		w.failedHealthChecks++
+		p.logger.Warn("worker healthcheck failed",
+			"worker_id", w.id,
+			"failed_checks", w.failedHealthChecks,
+			"error", r.err,
+		)
+
+		if w.failedHealthChecks >= 3 {
+			w.status = Dead
+			p.removeFromWorkersQueue(w.id)
+			p.publishWorkerStatus(w)
+		}
+		return
+	}
+
+	w.failedHealthChecks = 0
+	if r.health.CPUUsagePercent != nil {
+		w.cpuUsagePercent = append(w.cpuUsagePercent, *r.health.CPUUsagePercent)
+	}
+	if r.health.MemoryUsed != nil {
+		w.memoryUsed = append(w.memoryUsed, *r.health.MemoryUsed)
+	}
+	if r.health.StorageUsed != nil {
+		w.storageUsed = append(w.storageUsed, *r.health.StorageUsed)
+	}
+
+	if w.status == Dead {
+		w.status = Available
+		p.workersQueue = append(p.workersQueue, w.id)
+		p.publishWorkerStatus(w)
+		p.trySendWorker()
 	}
 }
 
@@ -181,10 +298,7 @@ func (p *Pool) handleReleaseWorker(r releaseWorkerReq) {
 	}
 
 	w.status = Available
-	p.broker.Publish(EventWorkerUpdated, WorkerUpdatedEvent{
-		ID:     w.id,
-		Status: w.status.String(),
-	})
+	p.publishWorkerStatus(w)
 	p.workersQueue = append(p.workersQueue, w.id)
 	p.trySendWorker()
 }
@@ -199,12 +313,28 @@ func (p *Pool) trySendWorker() {
 
 		w := p.workers[id]
 		w.status = Busy
-		p.broker.Publish(EventWorkerUpdated, WorkerUpdatedEvent{
-			ID:     w.id,
-			Status: w.status.String(),
-		})
+		p.publishWorkerStatus(w)
 		replyCh <- w
 	}
+}
+
+func (p *Pool) removeFromWorkersQueue(workerID int) {
+	filtered := make([]int, 0, len(p.workersQueue))
+
+	for _, id := range p.workersQueue {
+		if id != workerID {
+			filtered = append(filtered, id)
+		}
+	}
+
+	p.workersQueue = filtered
+}
+
+func (p *Pool) publishWorkerStatus(w *worker) {
+	p.broker.Publish(EventWorkerUpdated, WorkerUpdatedEvent{
+		ID:     w.id,
+		Status: w.status.String(),
+	})
 }
 
 func (p *Pool) AddWorker(info NewWorker) int {
