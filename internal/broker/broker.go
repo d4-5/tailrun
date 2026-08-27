@@ -101,6 +101,8 @@ func (b *Broker) Handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+
+	// Prevent NAT devices, firewalls, and proxies from closing an idle stream
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
 
