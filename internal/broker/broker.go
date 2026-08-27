@@ -56,8 +56,9 @@ func (b *Broker) Publish(eventType string, data any) {
 		select {
 		case ch <- ev:
 		default:
-			b.logger.Error("client buffer full",
-				"sequence", b.nextSeq)
+			b.logger.Warn("dropping event for slow SSE client",
+				"sequence", b.nextSeq,
+				"event_type", ev.Type)
 		}
 	}
 }
