@@ -103,7 +103,7 @@ func main() {
 		}()
 
 		// tsnet writes to both its Logf callback and the stdlib log package.
-		// Bridge both sources to the application logger at debug level.
+		// This dridges both sources to the application logger at debug level.
 		log.SetOutput(&slogWriter{logger: logger})
 		ts.Logf = func(format string, args ...any) {
 			logger.Debug(fmt.Sprintf("tsnet: "+format, args...))
