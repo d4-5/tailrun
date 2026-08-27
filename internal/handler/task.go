@@ -186,9 +186,10 @@ func (h *TaskHandler) HandleGetTaskLogs(w http.ResponseWriter, r *http.Request) 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	buf, err := json.Marshal(v)
 	if err != nil {
-		http.Error(w, "failed to encode response", http.StatusInternalServerError)
-		return
+		buf = []byte(`{"error":"failed to encode response"}`)
+		status = http.StatusInternalServerError
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(buf)

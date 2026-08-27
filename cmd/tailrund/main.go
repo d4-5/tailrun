@@ -79,7 +79,11 @@ func main() {
 			Hostname: *hostname,
 			Dir:      *tsnetDir,
 		}
-		defer func() { _ = ts.Close() }()
+		defer func() {
+			if err := ts.Close(); err != nil {
+				logger.Warn("failed to close tsnet server", "error", err)
+			}
+		}()
 
 		if *tsnetLogs {
 			// tsnet writes to the stdlib log package
@@ -99,13 +103,15 @@ func main() {
 		logger.Error("failed to create listener", "error", err)
 		os.Exit(1)
 	}
-	defer func() { _ = ln.Close() }()
+	defer func() {
+		if err := ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			logger.Warn("failed to close listener", "error", err)
+		}
+	}()
 
 	server := &http.Server{
-		Handler:     mux,
-		ReadTimeout: 5 * time.Second,
-		// WriteTimeout must be > broker's heartbeat ticker interval
-		// to prevent the server from timing out long-lived SSE connections.
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  5 * time.Second,
 	}
@@ -128,7 +134,7 @@ func main() {
 
 	logger.Info("tailrund shutting down")
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer shutdownCancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("failed to shut down tailrund server", "error", err)

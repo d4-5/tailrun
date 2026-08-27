@@ -41,7 +41,11 @@ func main() {
 		fmt.Printf("Failed to create temp dir: %v\n", err)
 		os.Exit(1)
 	}
-	defer func() { _ = os.RemoveAll(tempDir) }()
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			fmt.Printf("Failed to remove temp dir %s: %v\n", tempDir, err)
+		}
+	}()
 
 	controllerBin := filepath.Join(tempDir, "tailrund")
 	workerBin := filepath.Join(tempDir, "tailrun-worker")

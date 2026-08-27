@@ -64,14 +64,15 @@ func (b *Broker) Publish(eventType string, data any) {
 }
 
 func (b *Broker) Handler(w http.ResponseWriter, r *http.Request) {
+	rc := http.NewResponseController(w)
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
-		return
-	}
 
 	ch := make(chan Event, 50)
 	b.mu.Lock()
@@ -82,37 +83,42 @@ func (b *Broker) Handler(w http.ResponseWriter, r *http.Request) {
 		b.mu.Lock()
 		delete(b.clients, ch)
 		b.mu.Unlock()
-		close(ch)
 	}()
-
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
 
 	if _, err := fmt.Fprintf(w, "event: connected\ndata: {}\n\n"); err != nil {
 		return
 	}
-	flusher.Flush()
+	if err := rc.Flush(); err != nil {
+		return
+	}
 
 	ctx := r.Context()
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+
 	for {
 		select {
-		case ev := <-ch:
-			payload, err := json.Marshal(ev)
+		case event := <-ch:
+			payload, err := json.Marshal(event)
 			if err != nil {
 				b.logger.Error("failed to marshal event", "error", err)
 				continue
 			}
+
 			if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
 				return
 			}
-			flusher.Flush()
-
-		case <-ticker.C:
-			if _, err := fmt.Fprintf(w, ":\n\n"); err != nil {
+			if err := rc.Flush(); err != nil {
 				return
 			}
-			flusher.Flush()
 
+		case <-heartbeat.C:
+			if _, err := fmt.Fprint(w, ": keep-alive\n\n"); err != nil {
+				return
+			}
+			if err := rc.Flush(); err != nil {
+				return
+			}
 		case <-ctx.Done():
 			return
 		}
