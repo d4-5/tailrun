@@ -16,8 +16,7 @@ type Event struct {
 }
 
 type Broker struct {
-	mu sync.Mutex
-	// we use map instead of slice to allow faster deletion
+	mu      sync.Mutex
 	clients map[chan Event]struct{}
 	logger  *slog.Logger
 	nextSeq uint64
@@ -64,8 +63,14 @@ func (b *Broker) Publish(eventType string, data any) {
 }
 
 func (b *Broker) Handler(w http.ResponseWriter, r *http.Request) {
+	logger := b.logger.With(
+		"remote_addr", r.RemoteAddr,
+		"user_agent", r.UserAgent(),
+	)
+
 	rc := http.NewResponseController(w)
 	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+		logger.Error("failed to configure SSE streaming", "error", err)
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
@@ -86,9 +91,11 @@ func (b *Broker) Handler(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if _, err := fmt.Fprintf(w, "event: connected\ndata: {}\n\n"); err != nil {
+		logger.Debug("SSE client disconnected while sending connection event", "error", err)
 		return
 	}
 	if err := rc.Flush(); err != nil {
+		logger.Debug("SSE client disconnected while flushing connection event", "error", err)
 		return
 	}
 
@@ -101,22 +108,34 @@ func (b *Broker) Handler(w http.ResponseWriter, r *http.Request) {
 		case event := <-ch:
 			payload, err := json.Marshal(event)
 			if err != nil {
-				b.logger.Error("failed to marshal event", "error", err)
+				logger.Error("failed to marshal event", "sequence", event.Sequence, "error", err)
 				continue
 			}
 
 			if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
+				logger.Debug("SSE client disconnected while sending event",
+					"sequence", event.Sequence,
+					"event_type", event.Type,
+					"error", err,
+				)
 				return
 			}
 			if err := rc.Flush(); err != nil {
+				logger.Debug("SSE client disconnected while flushing event",
+					"sequence", event.Sequence,
+					"event_type", event.Type,
+					"error", err,
+				)
 				return
 			}
 
 		case <-heartbeat.C:
 			if _, err := fmt.Fprint(w, ": keep-alive\n\n"); err != nil {
+				logger.Debug("SSE client disconnected while sending heartbeat", "error", err)
 				return
 			}
 			if err := rc.Flush(); err != nil {
+				logger.Debug("SSE client disconnected while flushing heartbeat", "error", err)
 				return
 			}
 		case <-ctx.Done():
