@@ -1,4 +1,4 @@
-name: CI/CD Workflow
+name: Test, Build & Lint
 
 on:
   push:
