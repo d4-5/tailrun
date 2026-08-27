@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/disk"
+	"github.com/shirou/gopsutil/v4/mem"
 )
 
 type HealthResponse struct {
@@ -68,13 +72,18 @@ func (h *Handler) HandleGetHealth(w http.ResponseWriter, r *http.Request) {
 		Status: status,
 	}
 
-	sys, err := getSysLoad()
-	if err != nil {
-		h.logger.Warn("failed to get system load information", "error", err)
-	} else {
-		resp.CPUUsagePercent = &sys.CPUUsagePercent
-		resp.MemoryUsed = &sys.MemoryUsed
-		resp.StorageUsed = &sys.StorageUsed
+	if percent, err := cpu.Percent(0, false); err == nil {
+		resp.CPUUsagePercent = &percent[0]
+	}
+
+	if memory, err := mem.VirtualMemory(); err == nil {
+		memoryUsed := Bytes(memory.Used)
+		resp.MemoryUsed = &memoryUsed
+	}
+
+	if storage, err := disk.Usage("/"); err == nil {
+		storageUsed := Bytes(storage.Used)
+		resp.StorageUsed = &storageUsed
 	}
 
 	writeJSON(w, http.StatusOK, resp)

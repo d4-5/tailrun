@@ -14,10 +14,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/shirou/gopsutil/v4/disk"
+	"github.com/shirou/gopsutil/v4/mem"
 	"tailscale.com/tsnet"
 )
 
@@ -104,7 +107,7 @@ func main() {
 		}()
 
 		// tsnet writes to both its Logf callback and the stdlib log package.
-		// Bridge both sources to the application logger at debug level.
+		// This bridges both sources to the application logger at debug level.
 		log.SetOutput(&slogWriter{logger: logger})
 		ts.Logf = func(format string, args ...any) {
 			logger.Debug(fmt.Sprintf("tsnet: "+format, args...))
@@ -176,18 +179,34 @@ func main() {
 }
 
 func registerWorker(controllerURL, workerURL string, logger *slog.Logger) error {
-	sys, err := getSysInfo()
+	hostname, err := os.Hostname()
 	if err != nil {
-		return fmt.Errorf("failed to get system info: %w", err)
+		return fmt.Errorf("failed to get hostname: %w", err)
+	}
+
+	var memory *Bytes
+	if memoryInfo, err := mem.VirtualMemory(); err == nil {
+		memoryValue := Bytes(memoryInfo.Total)
+		memory = &memoryValue
+	} else {
+		logger.Warn("failed to get memory information", "error", err)
+	}
+
+	var storage *Bytes
+	if storageInfo, err := disk.Usage("/"); err == nil {
+		storageValue := Bytes(storageInfo.Total)
+		storage = &storageValue
+	} else {
+		logger.Warn("failed to get storage information", "error", err)
 	}
 
 	reqBody := RegisterWorkerRequest{
 		URL:      workerURL,
-		Hostname: sys.Hostname,
-		CPUCores: sys.CPUCores,
-		OS:       sys.OS,
-		Memory:   sys.Memory,
-		Storage:  sys.Storage,
+		Hostname: hostname,
+		CPUCores: runtime.NumCPU(),
+		OS:       runtime.GOOS,
+		Memory:   memory,
+		Storage:  storage,
 	}
 
 	body, err := json.Marshal(reqBody)
