@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 const (
@@ -62,6 +63,13 @@ func (s WorkerStatus) String() string {
 
 type Bytes uint64
 
+type HealthSample struct {
+	Timestamp       time.Time `json:"timestamp"`
+	CPUUsagePercent *float64  `json:"cpuUsagePercent,omitempty"`
+	MemoryUsed      *Bytes    `json:"memoryUsed,omitempty"`
+	StorageUsed     *Bytes    `json:"storageUsed,omitempty"`
+}
+
 type worker struct {
 	id       int
 	url      string
@@ -75,9 +83,7 @@ type worker struct {
 	healthCheckInFlight bool
 	failedHealthChecks  int
 
-	cpuUsagePercent []float64
-	memoryUsed      []Bytes
-	storageUsed     []Bytes
+	healthHistory []HealthSample
 
 	httpClient *http.Client
 }

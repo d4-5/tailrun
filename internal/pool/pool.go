@@ -58,6 +58,8 @@ type HealthResponse struct {
 	StorageUsed     *Bytes   `json:"storageUsed,omitempty"`
 }
 
+const healthHistoryDuration = time.Hour
+
 type Pool struct {
 	workers              map[int]*worker
 	nextID               int
@@ -175,6 +177,7 @@ func (p *Pool) handleHealthCheckResult(r healthCheckResult) {
 	}
 
 	w.healthCheckInFlight = false
+	w.pruneHealthHistory(time.Now())
 	if r.err != nil {
 		w.failedHealthChecks++
 		p.logger.Warn("worker healthcheck failed",
@@ -192,21 +195,35 @@ func (p *Pool) handleHealthCheckResult(r healthCheckResult) {
 	}
 
 	w.failedHealthChecks = 0
-	if r.health.CPUUsagePercent != nil {
-		w.cpuUsagePercent = append(w.cpuUsagePercent, *r.health.CPUUsagePercent)
-	}
-	if r.health.MemoryUsed != nil {
-		w.memoryUsed = append(w.memoryUsed, *r.health.MemoryUsed)
-	}
-	if r.health.StorageUsed != nil {
-		w.storageUsed = append(w.storageUsed, *r.health.StorageUsed)
-	}
+	w.healthHistory = append(w.healthHistory, HealthSample{
+		Timestamp:       time.Now(),
+		CPUUsagePercent: r.health.CPUUsagePercent,
+		MemoryUsed:      r.health.MemoryUsed,
+		StorageUsed:     r.health.StorageUsed,
+	})
+	w.pruneHealthHistory(time.Now())
 
 	if w.status == Dead {
 		w.status = Available
 		p.workersQueue = append(p.workersQueue, w.id)
 		p.publishWorkerStatus(w)
 		p.trySendWorker()
+	}
+}
+
+func (w *worker) pruneHealthHistory(now time.Time) {
+	cutoff := now.Add(-healthHistoryDuration)
+	firstRecent := 0
+	for firstRecent < len(w.healthHistory) && w.healthHistory[firstRecent].Timestamp.Before(cutoff) {
+		firstRecent++
+	}
+
+	if firstRecent > 0 {
+		oldLength := len(w.healthHistory)
+		newLength := oldLength - firstRecent
+		copy(w.healthHistory, w.healthHistory[firstRecent:])
+		clear(w.healthHistory[newLength:oldLength])
+		w.healthHistory = w.healthHistory[:newLength]
 	}
 }
 
