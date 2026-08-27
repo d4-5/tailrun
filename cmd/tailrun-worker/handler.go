@@ -1,44 +1,57 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 )
 
 type HealthResponse struct {
-	Status          string  `json:"status"`
-	CPUUsagePercent float64 `json:"cpuUsagePercent"`
-	MemoryUsed      Bytes   `json:"memoryUsed"`
-	StorageUsed     Bytes   `json:"storageUsed"`
+	Status          string   `json:"status"`
+	CPUUsagePercent *float64 `json:"cpuUsagePercent,omitempty"`
+	MemoryUsed      *Bytes   `json:"memoryUsed,omitempty"`
+	StorageUsed     *Bytes   `json:"storageUsed,omitempty"`
+}
+
+type ErrorResponse struct {
+	Error string `json:"error"`
 }
 
 type Handler struct {
 	runner *Runner
+	cancel context.CancelFunc
+	logger *slog.Logger
 }
 
-func NewHandler(runner *Runner) *Handler {
-	return &Handler{runner: runner}
+func NewHandler(runner *Runner, cancel context.CancelFunc, logger *slog.Logger) *Handler {
+	return &Handler{
+		runner: runner,
+		cancel: cancel,
+		logger: logger,
+	}
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /tasks", h.HandlePostTask)
 	mux.HandleFunc("GET /health", h.HandleGetHealth)
+	mux.HandleFunc("POST /shutdown", h.HandlePostShutdown)
 }
 
 func (h *Handler) HandlePostTask(w http.ResponseWriter, r *http.Request) {
 	var task Task
 	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	if task.Command == "" {
-		http.Error(w, "command is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "command is required")
 		return
 	}
 
 	if err := h.runner.Start(task); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
+		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 
@@ -46,30 +59,51 @@ func (h *Handler) HandlePostTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) HandleGetHealth(w http.ResponseWriter, r *http.Request) {
-	sys, err := getSysLoad()
-	if err != nil {
-		http.Error(w, "failed to get system load info", http.StatusInternalServerError)
-		return
-	}
-
-	running := h.runner.Status()
 	status := "available"
-	if running {
+	if h.runner.Status() {
 		status = "busy"
 	}
 
 	resp := HealthResponse{
-		Status:          status,
-		CPUUsagePercent: sys.CPUUsagePercent,
-		MemoryUsed:      sys.MemoryUsed,
-		StorageUsed:     sys.StorageUsed,
+		Status: status,
 	}
 
-	buf, err := json.Marshal(resp)
+	sys, err := getSysLoad()
 	if err != nil {
-		http.Error(w, "failed to encode health response", http.StatusInternalServerError)
-		return
+		h.logger.Warn("failed to get system load information", "error", err)
+	} else {
+		resp.CPUUsagePercent = &sys.CPUUsagePercent
+		resp.MemoryUsed = &sys.MemoryUsed
+		resp.StorageUsed = &sys.StorageUsed
 	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) HandlePostShutdown(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusAccepted)
+
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	} else {
+		h.logger.Warn("response writer does not implement http.Flusher")
+	}
+
+	go h.cancel()
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	buf, err := json.Marshal(v)
+	if err != nil {
+		buf = []byte(`{"error":"failed to encode response"}`)
+		status = http.StatusInternalServerError
+	}
+
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
 	_, _ = w.Write(buf)
+}
+
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, ErrorResponse{Error: msg})
 }

@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -28,20 +30,24 @@ type AddTaskLogsRequest struct {
 type Runner struct {
 	mu            sync.Mutex
 	running       bool
+	ctx           context.Context
 	controllerURL string
 	httpClient    *http.Client
 	logger        *slog.Logger
 }
 
-func NewRunner(controllerURL string, logger *slog.Logger) *Runner {
+func NewRunner(ctx context.Context, controllerURL string, logger *slog.Logger) *Runner {
 	return &Runner{
+		ctx:           ctx,
 		controllerURL: controllerURL,
-		httpClient:    &http.Client{Timeout: 30 * time.Second},
+		httpClient:    &http.Client{Timeout: 5 * time.Second},
 		logger:        logger,
 	}
 }
 
 func (r *Runner) Status() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return r.running
 }
 
@@ -62,7 +68,7 @@ func (r *Runner) Start(task Task) error {
 func (r *Runner) execute(task Task) {
 	r.logger.Info("starting task execution", "task_id", task.ID, "command", task.Command)
 
-	cmd := exec.Command("/bin/sh", "-c", task.Command)
+	cmd := exec.CommandContext(r.ctx, "/bin/sh", "-c", task.Command)
 	cmd.Env = os.Environ()
 	for k, v := range task.EnvVars {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
@@ -73,6 +79,13 @@ func (r *Runner) execute(task Task) {
 	cmd.Stderr = &stderrBuf
 
 	err := cmd.Run()
+
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
+	}
+
 	var success bool
 	if err == nil {
 		success = true

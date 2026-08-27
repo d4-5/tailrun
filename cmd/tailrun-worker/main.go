@@ -26,8 +26,8 @@ type RegisterWorkerRequest struct {
 	Hostname string `json:"hostname"`
 	CPUCores int    `json:"cpuCores"`
 	OS       string `json:"os"`
-	Memory   Bytes  `json:"memory"`
-	Storage  Bytes  `json:"storage"`
+	Memory   *Bytes `json:"memory,omitempty"`
+	Storage  *Bytes `json:"storage,omitempty"`
 }
 
 type RegisterWorkerResponse struct {
@@ -67,7 +67,11 @@ func main() {
 			AuthKey: *authKey,
 			Dir:     *tsnetDir,
 		}
-		defer func() { _ = ts.Close() }()
+		defer func() {
+			if err := ts.Close(); err != nil {
+				logger.Warn("failed to close tsnet server", "error", err)
+			}
+		}()
 
 		if *tsnetLogs {
 			ts.Logf = func(format string, args ...any) {
@@ -82,10 +86,16 @@ func main() {
 		logger.Error("failed to create listener", "error", err)
 		os.Exit(1)
 	}
-	defer func() { _ = ln.Close() }()
+	defer func() {
+		if err := ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			logger.Warn("failed to close listener", "error", err)
+		}
+	}()
 
-	runner := NewRunner(*controllerURL, logger)
-	h := NewHandler(runner)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	runner := NewRunner(ctx, *controllerURL, logger)
+	h := NewHandler(runner, cancel, logger)
 
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
@@ -114,10 +124,17 @@ func main() {
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+
+	select {
+	case <-quit:
+		logger.Info("shutdown triggered by signal")
+	case <-ctx.Done():
+		logger.Info("shutdown triggered by context cancellation")
+	}
 
 	logger.Info("tailrun-worker shutting down")
 
+	cancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
