@@ -126,10 +126,8 @@ func main() {
 		}
 	}()
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	runner := NewRunner(ctx, *controllerURL, logger)
-	h := NewHandler(runner, cancel, logger)
+	runner := NewRunner(*controllerURL, logger)
+	h := NewHandler(runner, logger)
 
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
@@ -159,16 +157,10 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
-	select {
-	case <-quit:
-		logger.Info("shutdown triggered by signal")
-	case <-ctx.Done():
-		logger.Info("shutdown triggered by context cancellation")
-	}
+	<-quit
 
 	logger.Info("tailrun-worker shutting down")
 
-	cancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {

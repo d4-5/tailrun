@@ -30,15 +30,13 @@ type AddTaskLogsRequest struct {
 type Runner struct {
 	mu            sync.Mutex
 	running       bool
-	ctx           context.Context
 	controllerURL string
 	httpClient    *http.Client
 	logger        *slog.Logger
 }
 
-func NewRunner(ctx context.Context, controllerURL string, logger *slog.Logger) *Runner {
+func NewRunner(controllerURL string, logger *slog.Logger) *Runner {
 	return &Runner{
-		ctx:           ctx,
 		controllerURL: controllerURL,
 		httpClient:    &http.Client{Timeout: 5 * time.Second},
 		logger:        logger,
@@ -68,7 +66,7 @@ func (r *Runner) Start(task Task) error {
 func (r *Runner) execute(task Task) {
 	r.logger.Info("starting task execution", "task_id", task.ID, "command", task.Command)
 
-	cmd := exec.CommandContext(r.ctx, "/bin/sh", "-c", task.Command)
+	cmd := exec.Command("/bin/sh", "-c", task.Command)
 	cmd.Env = os.Environ()
 	for k, v := range task.EnvVars {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))

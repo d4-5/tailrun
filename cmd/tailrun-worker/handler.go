@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -24,14 +23,12 @@ type ErrorResponse struct {
 
 type Handler struct {
 	runner *Runner
-	cancel context.CancelFunc
 	logger *slog.Logger
 }
 
-func NewHandler(runner *Runner, cancel context.CancelFunc, logger *slog.Logger) *Handler {
+func NewHandler(runner *Runner, logger *slog.Logger) *Handler {
 	return &Handler{
 		runner: runner,
-		cancel: cancel,
 		logger: logger,
 	}
 }
@@ -39,7 +36,6 @@ func NewHandler(runner *Runner, cancel context.CancelFunc, logger *slog.Logger) 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /tasks", h.HandlePostTask)
 	mux.HandleFunc("GET /health", h.HandleGetHealth)
-	mux.HandleFunc("POST /shutdown", h.HandlePostShutdown)
 }
 
 func (h *Handler) HandlePostTask(w http.ResponseWriter, r *http.Request) {
@@ -87,18 +83,6 @@ func (h *Handler) HandleGetHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
-}
-
-func (h *Handler) HandlePostShutdown(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusAccepted)
-
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	} else {
-		h.logger.Warn("response writer does not implement http.Flusher")
-	}
-
-	go h.cancel()
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
