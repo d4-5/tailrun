@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"log/slog"
 	"net"
@@ -32,7 +31,7 @@ type slogWriter struct {
 
 func (w *slogWriter) Write(p []byte) (n int, err error) {
 	message := strings.TrimSuffix(string(p), "\n")
-	w.logger.Info(message)
+	w.logger.Debug(message)
 	return len(p), nil
 }
 
@@ -43,11 +42,29 @@ func main() {
 	defaultTsnetDir := filepath.Join(homeDir, ".local", "tailrund")
 	tsnetDir := flag.String("tsnet-dir", defaultTsnetDir, "Directory for tsnet state")
 	listenAddr := flag.String("listen", ":80", "Listen address")
-	tsnetLogs := flag.Bool("tsnet-logs", false, "Enable tsnet logs")
+	logLevel := flag.String("log-level", "info", "Log level: debug, info, warn, or error")
+	logFormat := flag.String("log-format", "json", "Log format: json or text")
 	localMode := flag.Bool("local", false, "Run in local mode without Tailscale")
 	flag.Parse()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(*logLevel)); err != nil {
+		fmt.Fprintf(os.Stderr, "invalid log level %q: %v\n", *logLevel, err)
+		os.Exit(2)
+	}
+
+	options := &slog.HandlerOptions{Level: level}
+	var logHandler slog.Handler
+	switch *logFormat {
+	case "json":
+		logHandler = slog.NewJSONHandler(os.Stdout, options)
+	case "text":
+		logHandler = slog.NewTextHandler(os.Stdout, options)
+	default:
+		fmt.Fprintf(os.Stderr, "invalid log format %q: must be json or text\n", *logFormat)
+		os.Exit(2)
+	}
+	logger := slog.New(logHandler)
 
 	if !*localMode && *authKey == "" {
 		logger.Error("failed to start", "error", errors.New("missing required auth key"))
@@ -85,15 +102,11 @@ func main() {
 			}
 		}()
 
-		if *tsnetLogs {
-			// tsnet writes to the stdlib log package
-			// This bridges those logs to our slog logger
-			log.SetOutput(&slogWriter{logger: logger})
-			ts.Logf = func(format string, args ...any) {
-				logger.Info(fmt.Sprintf("tsnet: "+format, args...))
-			}
-		} else {
-			log.SetOutput(io.Discard)
+		// tsnet writes to both its Logf callback and the stdlib log package.
+		// Bridge both sources to the application logger at debug level.
+		log.SetOutput(&slogWriter{logger: logger})
+		ts.Logf = func(format string, args ...any) {
+			logger.Debug(fmt.Sprintf("tsnet: "+format, args...))
 		}
 
 		ln, err = ts.Listen("tcp", *listenAddr)
