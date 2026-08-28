@@ -63,11 +63,13 @@ func (s WorkerStatus) String() string {
 
 type Bytes uint64
 
-type HealthSample struct {
-	Timestamp       time.Time `json:"timestamp"`
-	CPUUsagePercent *float64  `json:"cpuUsagePercent,omitempty"`
-	MemoryUsed      *Bytes    `json:"memoryUsed,omitempty"`
-	StorageUsed     *Bytes    `json:"storageUsed,omitempty"`
+const maxResourceUsageSamples = 50
+
+type ResourceUsage struct {
+	Timestamp       time.Time
+	CPUUsagePercent *float64
+	MemoryUsed      *Bytes
+	StorageUsed     *Bytes
 }
 
 type worker struct {
@@ -83,7 +85,7 @@ type worker struct {
 	healthCheckInFlight bool
 	failedHealthChecks  int
 
-	healthHistory []HealthSample
+	resourceUsage []ResourceUsage
 
 	httpClient *http.Client
 }
@@ -140,4 +142,51 @@ func (w *worker) Execute(task Task) error {
 
 func (w *worker) ID() int {
 	return w.id
+}
+
+func (w *worker) addResourceUsage(health HealthResponse) {
+	w.resourceUsage = append(w.resourceUsage, ResourceUsage{
+		Timestamp:       time.Now(),
+		CPUUsagePercent: health.CPUUsagePercent,
+		MemoryUsed:      health.MemoryUsed,
+		StorageUsed:     health.StorageUsed,
+	})
+	if len(w.resourceUsage) <= maxResourceUsageSamples {
+		return
+	}
+
+	firstRecent := len(w.resourceUsage) - maxResourceUsageSamples
+	oldLength := len(w.resourceUsage)
+	copy(w.resourceUsage, w.resourceUsage[firstRecent:])
+	clear(w.resourceUsage[maxResourceUsageSamples:oldLength])
+	w.resourceUsage = w.resourceUsage[:maxResourceUsageSamples]
+}
+
+func (w *worker) checkHealth() (HealthResponse, error) {
+	var health HealthResponse
+
+	req, err := http.NewRequest(
+		http.MethodGet,
+		w.url+"/health",
+		nil,
+	)
+	if err != nil {
+		return health, err
+	}
+
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return health, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return health, fmt.Errorf("worker returned health status %d", resp.StatusCode)
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		return health, fmt.Errorf("decode health response: %w", err)
+	}
+
+	return health, nil
 }

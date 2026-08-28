@@ -2,9 +2,7 @@ package pool
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -57,8 +55,6 @@ type HealthResponse struct {
 	MemoryUsed      *Bytes   `json:"memoryUsed,omitempty"`
 	StorageUsed     *Bytes   `json:"storageUsed,omitempty"`
 }
-
-const healthHistoryDuration = time.Hour
 
 type Pool struct {
 	workers              map[int]*worker
@@ -126,44 +122,17 @@ func (p *Pool) startHealthChecks() {
 		}
 		w.healthCheckInFlight = true
 
-		go p.checkWorkerHealth(*w)
+		go p.checkWorkerHealth(w)
 	}
 }
 
-func (p *Pool) checkWorkerHealth(w worker) {
-	var health HealthResponse
-
-	req, err := http.NewRequest(
-		http.MethodGet,
-		w.url+"/health",
-		nil,
-	)
-	if err != nil {
-		p.healthCheckResultCh <- healthCheckResult{workerID: w.id, health: health, err: err}
-		return
+func (p *Pool) checkWorkerHealth(w *worker) {
+	health, err := w.checkHealth()
+	p.healthCheckResultCh <- healthCheckResult{
+		workerID: w.id,
+		health:   health,
+		err:      err,
 	}
-
-	resp, err := p.httpClient.Do(req)
-	if err != nil {
-		p.healthCheckResultCh <- healthCheckResult{workerID: w.id, health: health, err: err}
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		err = fmt.Errorf("worker returned health status %d", resp.StatusCode)
-		p.healthCheckResultCh <- healthCheckResult{workerID: w.id, health: health, err: err}
-		return
-
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
-		err = fmt.Errorf("decode health response: %w", err)
-		p.healthCheckResultCh <- healthCheckResult{workerID: w.id, health: health, err: err}
-		return
-	}
-
-	p.healthCheckResultCh <- healthCheckResult{workerID: w.id, health: health, err: nil}
 }
 
 func (p *Pool) handleHealthCheckResult(r healthCheckResult) {
@@ -177,7 +146,6 @@ func (p *Pool) handleHealthCheckResult(r healthCheckResult) {
 	}
 
 	w.healthCheckInFlight = false
-	w.pruneHealthHistory(time.Now())
 	if r.err != nil {
 		w.failedHealthChecks++
 		p.logger.Warn("worker healthcheck failed",
@@ -187,43 +155,19 @@ func (p *Pool) handleHealthCheckResult(r healthCheckResult) {
 		)
 
 		if w.failedHealthChecks >= 3 {
-			w.status = Dead
-			p.removeFromWorkersQueue(w.id)
-			p.publishWorkerStatus(w)
+			p.setWorkerStatus(w, Dead)
+			p.removeWorkerFromQueue(w.id)
 		}
 		return
 	}
 
 	w.failedHealthChecks = 0
-	w.healthHistory = append(w.healthHistory, HealthSample{
-		Timestamp:       time.Now(),
-		CPUUsagePercent: r.health.CPUUsagePercent,
-		MemoryUsed:      r.health.MemoryUsed,
-		StorageUsed:     r.health.StorageUsed,
-	})
-	w.pruneHealthHistory(time.Now())
+	w.addResourceUsage(r.health)
 
 	if w.status == Dead {
-		w.status = Available
+		p.setWorkerStatus(w, Available)
 		p.workersQueue = append(p.workersQueue, w.id)
-		p.publishWorkerStatus(w)
 		p.trySendWorker()
-	}
-}
-
-func (w *worker) pruneHealthHistory(now time.Time) {
-	cutoff := now.Add(-healthHistoryDuration)
-	firstRecent := 0
-	for firstRecent < len(w.healthHistory) && w.healthHistory[firstRecent].Timestamp.Before(cutoff) {
-		firstRecent++
-	}
-
-	if firstRecent > 0 {
-		oldLength := len(w.healthHistory)
-		newLength := oldLength - firstRecent
-		copy(w.healthHistory, w.healthHistory[firstRecent:])
-		clear(w.healthHistory[newLength:oldLength])
-		w.healthHistory = w.healthHistory[:newLength]
 	}
 }
 
@@ -314,8 +258,7 @@ func (p *Pool) handleReleaseWorker(r releaseWorkerReq) {
 		return
 	}
 
-	w.status = Available
-	p.publishWorkerStatus(w)
+	p.setWorkerStatus(w, Available)
 	p.workersQueue = append(p.workersQueue, w.id)
 	p.trySendWorker()
 }
@@ -329,13 +272,12 @@ func (p *Pool) trySendWorker() {
 		p.workersQueue = p.workersQueue[1:]
 
 		w := p.workers[id]
-		w.status = Busy
-		p.publishWorkerStatus(w)
+		p.setWorkerStatus(w, Busy)
 		replyCh <- w
 	}
 }
 
-func (p *Pool) removeFromWorkersQueue(workerID int) {
+func (p *Pool) removeWorkerFromQueue(workerID int) {
 	filtered := make([]int, 0, len(p.workersQueue))
 
 	for _, id := range p.workersQueue {
@@ -347,7 +289,12 @@ func (p *Pool) removeFromWorkersQueue(workerID int) {
 	p.workersQueue = filtered
 }
 
-func (p *Pool) publishWorkerStatus(w *worker) {
+func (p *Pool) setWorkerStatus(w *worker, status WorkerStatus) {
+	if w.status == status {
+		return
+	}
+
+	w.status = status
 	p.broker.Publish(EventWorkerUpdated, WorkerUpdatedEvent{
 		ID:     w.id,
 		Status: w.status.String(),
