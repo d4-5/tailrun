@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/n9cw/tailrun/internal/pool"
 )
@@ -13,6 +14,7 @@ type Workers interface {
 	AddWorker(info pool.NewWorker) int
 	GetWorkers() []pool.WorkerInfo
 	GetWorker(id int) (pool.WorkerInfo, error)
+	GetResourceUsage(id int) ([]pool.ResourceUsageInfo, error)
 }
 
 type RegisterWorkerRequest struct {
@@ -39,6 +41,13 @@ type WorkerResponse struct {
 	Storage  *pool.Bytes `json:"storage,omitempty"`
 }
 
+type ResourceUsageResponse struct {
+	Timestamp       time.Time   `json:"timestamp"`
+	CPUUsagePercent *float64    `json:"cpuUsagePercent,omitempty"`
+	MemoryUsed      *pool.Bytes `json:"memoryUsed,omitempty"`
+	StorageUsed     *pool.Bytes `json:"storageUsed,omitempty"`
+}
+
 type WorkerHandler struct {
 	workers Workers
 }
@@ -51,6 +60,7 @@ func (h *WorkerHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/workers", h.HandleRegisterWorker)
 	mux.HandleFunc("GET /api/workers", h.HandleGetWorkers)
 	mux.HandleFunc("GET /api/workers/{id}", h.HandleGetWorker)
+	mux.HandleFunc("GET /api/workers/{id}/resource-usage", h.HandleGetResourceUsage)
 }
 
 func (h *WorkerHandler) HandleRegisterWorker(w http.ResponseWriter, r *http.Request) {
@@ -146,4 +156,34 @@ func (h *WorkerHandler) HandleGetWorker(w http.ResponseWriter, r *http.Request) 
 		Storage:  worker.Storage,
 	}
 	writeJSON(w, http.StatusOK, wr)
+}
+
+func (h *WorkerHandler) HandleGetResourceUsage(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid worker id")
+		return
+	}
+
+	usage, err := h.workers.GetResourceUsage(id)
+	if err != nil {
+		if errors.Is(err, pool.ErrWorkerNotFound) {
+			writeError(w, http.StatusNotFound, "worker not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	resp := make([]ResourceUsageResponse, len(usage))
+	for i, sample := range usage {
+		resp[i] = ResourceUsageResponse{
+			Timestamp:       sample.Timestamp,
+			CPUUsagePercent: sample.CPUUsagePercent,
+			MemoryUsed:      sample.MemoryUsed,
+			StorageUsed:     sample.StorageUsed,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }

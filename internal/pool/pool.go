@@ -35,6 +35,16 @@ type getWorkerReq struct {
 	reply chan getWorkerResult
 }
 
+type getResourceUsageResult struct {
+	usage []ResourceUsageInfo
+	err   error
+}
+
+type getResourceUsageReq struct {
+	id    int
+	reply chan getResourceUsageResult
+}
+
 type getAvailableWorkerReq struct {
 	reply chan Worker
 }
@@ -62,6 +72,7 @@ type Pool struct {
 	addWorkerCh          chan addWorkerReq
 	getWorkersCh         chan getWorkersReq
 	getWorkerCh          chan getWorkerReq
+	getResourceUsageCh   chan getResourceUsageReq
 	getAvailableWorkerCh chan getAvailableWorkerReq
 	releaseWorkerCh      chan releaseWorkerReq
 	healthCheckResultCh  chan healthCheckResult
@@ -78,6 +89,7 @@ func New(broker Broker, logger *slog.Logger) *Pool {
 		addWorkerCh:          make(chan addWorkerReq, 50),
 		getWorkersCh:         make(chan getWorkersReq, 50),
 		getWorkerCh:          make(chan getWorkerReq, 50),
+		getResourceUsageCh:   make(chan getResourceUsageReq, 50),
 		getAvailableWorkerCh: make(chan getAvailableWorkerReq, 50),
 		releaseWorkerCh:      make(chan releaseWorkerReq, 50),
 		healthCheckResultCh:  make(chan healthCheckResult, 50),
@@ -103,6 +115,8 @@ func (p *Pool) Run(ctx context.Context) {
 			p.handleGetWorkers(r)
 		case r := <-p.getWorkerCh:
 			p.handleGetWorker(r)
+		case r := <-p.getResourceUsageCh:
+			p.handleGetResourceUsage(r)
 		case r := <-p.getAvailableWorkerCh:
 			p.handleGetAvailableWorker(r)
 		case r := <-p.releaseWorkerCh:
@@ -240,6 +254,25 @@ func (p *Pool) handleGetWorker(r getWorkerReq) {
 	}
 }
 
+func (p *Pool) handleGetResourceUsage(r getResourceUsageReq) {
+	w, ok := p.workers[r.id]
+	if !ok {
+		r.reply <- getResourceUsageResult{err: ErrWorkerNotFound}
+		return
+	}
+
+	usage := make([]ResourceUsageInfo, len(w.resourceUsage))
+	for i, sample := range w.resourceUsage {
+		usage[i] = ResourceUsageInfo{
+			Timestamp:       sample.Timestamp,
+			CPUUsagePercent: sample.CPUUsagePercent,
+			MemoryUsed:      sample.MemoryUsed,
+			StorageUsed:     sample.StorageUsed,
+		}
+	}
+	r.reply <- getResourceUsageResult{usage: usage}
+}
+
 func (p *Pool) handleGetAvailableWorker(r getAvailableWorkerReq) {
 	p.waitQueue = append(p.waitQueue, r.reply)
 	p.trySendWorker()
@@ -318,6 +351,13 @@ func (p *Pool) GetWorker(id int) (WorkerInfo, error) {
 	p.getWorkerCh <- getWorkerReq{id: id, reply: reply}
 	res := <-reply
 	return res.info, res.err
+}
+
+func (p *Pool) GetResourceUsage(id int) ([]ResourceUsageInfo, error) {
+	reply := make(chan getResourceUsageResult, 1)
+	p.getResourceUsageCh <- getResourceUsageReq{id: id, reply: reply}
+	res := <-reply
+	return res.usage, res.err
 }
 
 func (p *Pool) AvailableWorker() <-chan Worker {

@@ -65,7 +65,14 @@ type Bytes uint64
 
 const maxResourceUsageSamples = 50
 
-type ResourceUsage struct {
+type resourceUsage struct {
+	Timestamp       time.Time
+	CPUUsagePercent *float64
+	MemoryUsed      *Bytes
+	StorageUsed     *Bytes
+}
+
+type ResourceUsageInfo struct {
 	Timestamp       time.Time
 	CPUUsagePercent *float64
 	MemoryUsed      *Bytes
@@ -85,7 +92,7 @@ type worker struct {
 	healthCheckInFlight bool
 	failedHealthChecks  int
 
-	resourceUsage []ResourceUsage
+	resourceUsage []resourceUsage
 
 	httpClient *http.Client
 }
@@ -145,7 +152,7 @@ func (w *worker) ID() int {
 }
 
 func (w *worker) addResourceUsage(health HealthResponse) {
-	w.resourceUsage = append(w.resourceUsage, ResourceUsage{
+	w.resourceUsage = append(w.resourceUsage, resourceUsage{
 		Timestamp:       time.Now(),
 		CPUUsagePercent: health.CPUUsagePercent,
 		MemoryUsed:      health.MemoryUsed,
