@@ -22,7 +22,6 @@ import (
 	"github.com/n9cw/tailrun/internal/handler"
 	"github.com/n9cw/tailrun/internal/pool"
 	"github.com/n9cw/tailrun/internal/scheduler"
-	"github.com/n9cw/tailrun/internal/web"
 )
 
 type slogWriter struct {
@@ -77,7 +76,7 @@ func main() {
 
 	taskHandler := handler.NewTaskHandler(s)
 	workerHandler := handler.NewWorkerHandler(p)
-	staticHandler := handler.NewStaticHandler(web.FS)
+	staticHandler := handler.NewStaticHandler()
 
 	mux := http.NewServeMux()
 	staticHandler.RegisterRoutes(mux)
