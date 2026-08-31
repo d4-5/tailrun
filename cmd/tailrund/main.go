@@ -114,7 +114,7 @@ func main() {
 	staticHandler.RegisterRoutes(mux)
 	taskHandler.RegisterRoutes(mux)
 	workerHandler.RegisterRoutes(mux)
-	mux.HandleFunc("GET /api/events", eb.Handler)
+	eb.RegisterRoutes(mux)
 
 	var ln net.Listener
 	var err error

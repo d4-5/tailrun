@@ -31,6 +31,10 @@ func New(logger *slog.Logger) *Broker {
 	}
 }
 
+func (b *Broker) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/events", b.Handler)
+}
+
 func (b *Broker) Publish(eventType string, data any) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
