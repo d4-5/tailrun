@@ -37,9 +37,13 @@ func (w *slogWriter) Write(p []byte) (n int, err error) {
 func main() {
 	authKey := flag.String("auth-key", "", "Tailscale auth key used to join the tailnet")
 	hostname := flag.String("hostname", "tailrund", "Tailscale hostname for this service")
-	homeDir, _ := os.UserHomeDir()
-	defaultTsnetDir := filepath.Join(homeDir, ".local", "tailrund")
-	tsnetDir := flag.String("tsnet-dir", defaultTsnetDir, "Directory for tsnet state")
+	configDir, configErr := os.UserConfigDir()
+	if configErr != nil {
+		fmt.Fprintf(os.Stderr, "failed to determine user config directory: %v\n", configErr)
+		os.Exit(1)
+	}
+	defaultDataDir := filepath.Join(configDir, "tailrund")
+	dataDir := flag.String("data-dir", defaultDataDir, "Directory for tailrund application data and state")
 	listenAddr := flag.String("listen", ":80", "Listen address")
 	logLevel := flag.String("log-level", "info", "Log level: debug, info, warn, or error")
 	logFormat := flag.String("log-format", "json", "Log format: json or text")
@@ -64,6 +68,17 @@ func main() {
 		os.Exit(2)
 	}
 	logger := slog.New(logHandler)
+
+	if err := os.MkdirAll(*dataDir, 0o700); err != nil {
+		logger.Error("failed to create application data directory", "directory", *dataDir, "error", err)
+		os.Exit(1)
+	}
+
+	tsnetDir := filepath.Join(*dataDir, "tsnet")
+	if err := os.MkdirAll(tsnetDir, 0o700); err != nil {
+		logger.Error("failed to create tsnet data directory", "directory", tsnetDir, "error", err)
+		os.Exit(1)
+	}
 
 	if !*localMode && *authKey == "" {
 		logger.Error("failed to start", "error", errors.New("missing required auth key"))
@@ -93,7 +108,7 @@ func main() {
 		ts := &tsnet.Server{
 			AuthKey:  *authKey,
 			Hostname: *hostname,
-			Dir:      *tsnetDir,
+			Dir:      tsnetDir,
 		}
 		defer func() {
 			if err := ts.Close(); err != nil {
