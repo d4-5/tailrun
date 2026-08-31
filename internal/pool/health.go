@@ -1,6 +1,15 @@
 package pool
 
+import "errors"
+
 const maxConsecutiveHealthCheckErrors = 3
+
+var ErrWorkerDied = errors.New("worker died")
+
+type WorkerError struct {
+	WorkerID int
+	Err      error
+}
 
 type getResourceUsageResult struct {
 	usage []ResourceUsageInfo
@@ -64,9 +73,13 @@ func (p *Pool) handleHealthCheckResult(r healthCheckResult) {
 			"error", r.err,
 		)
 
-		if w.failedHealthChecks >= maxConsecutiveHealthCheckErrors {
+		if w.failedHealthChecks >= maxConsecutiveHealthCheckErrors && w.status != Dead {
 			p.setWorkerStatus(w, Dead)
 			p.removeWorkerFromQueue(w.id)
+			p.workerErrorCh <- WorkerError{
+				WorkerID: w.id,
+				Err:      ErrWorkerDied,
+			}
 		}
 		return
 	}
@@ -79,6 +92,10 @@ func (p *Pool) handleHealthCheckResult(r healthCheckResult) {
 		p.workersQueue = append(p.workersQueue, w.id)
 		p.trySendWorker()
 	}
+}
+
+func (p *Pool) WorkerError() <-chan WorkerError {
+	return p.workerErrorCh
 }
 
 func (p *Pool) handleGetResourceUsage(r getResourceUsageReq) {

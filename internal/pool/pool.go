@@ -50,6 +50,7 @@ type Pool struct {
 	getAvailableWorkerCh chan getAvailableWorkerReq
 	releaseWorkerCh      chan releaseWorkerReq
 	healthCheckResultCh  chan healthCheckResult
+	workerErrorCh        chan WorkerError
 	workersQueue         []int
 	waitQueue            []chan Worker
 	httpClient           *http.Client
@@ -67,6 +68,7 @@ func New(broker Broker, logger *slog.Logger) *Pool {
 		getAvailableWorkerCh: make(chan getAvailableWorkerReq, channelBufferSize),
 		releaseWorkerCh:      make(chan releaseWorkerReq, channelBufferSize),
 		healthCheckResultCh:  make(chan healthCheckResult, channelBufferSize),
+		workerErrorCh:        make(chan WorkerError, channelBufferSize),
 		httpClient:           &http.Client{Timeout: 10 * time.Second},
 		logger:               logger,
 		broker:               broker,

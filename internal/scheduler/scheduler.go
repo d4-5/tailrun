@@ -12,6 +12,7 @@ const channelBufferSize = 50
 
 type Pool interface {
 	AvailableWorker() <-chan pool.Worker
+	WorkerError() <-chan pool.WorkerError
 	ReleaseWorker(id int)
 }
 
@@ -85,6 +86,7 @@ type Scheduler struct {
 	addTaskLogsCh    chan addTaskLogsReq
 	workerReadyCh    chan workerReady
 	dispatchResultCh chan dispatchResult
+	workerErrorCh    <-chan pool.WorkerError
 	waitingForWorker bool
 	broker           Broker
 }
@@ -100,6 +102,7 @@ func New(pool Pool, broker Broker, logger *slog.Logger) *Scheduler {
 		addTaskLogsCh:    make(chan addTaskLogsReq, channelBufferSize),
 		workerReadyCh:    make(chan workerReady, channelBufferSize),
 		dispatchResultCh: make(chan dispatchResult, channelBufferSize),
+		workerErrorCh:    pool.WorkerError(),
 		tasks:            make(map[int]*Task),
 		queue:            make([]int, 0),
 		nextID:           1,
@@ -125,10 +128,48 @@ func (s *Scheduler) Run(ctx context.Context) {
 			s.handleWorkerReady(r)
 		case r := <-s.dispatchResultCh:
 			s.handleDispatchResult(r)
+		case r := <-s.workerErrorCh:
+			s.handleWorkerError(r)
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+func (s *Scheduler) handleWorkerError(r pool.WorkerError) {
+	if !errors.Is(r.Err, pool.ErrWorkerDied) {
+		s.logger.Warn(
+			"received unexpected worker error",
+			"worker_id", r.WorkerID,
+			"error", r.Err,
+		)
+		return
+	}
+
+	s.logger.Warn("worker died",
+		"worker_id", r.WorkerID,
+		"error", r.Err,
+	)
+
+	for _, task := range s.tasks {
+		if task.Status != Executing || task.WorkerID == nil || *task.WorkerID != r.WorkerID {
+			continue
+		}
+
+		task.Status = Waiting
+		task.WorkerID = nil
+		s.queue = append([]int{task.ID}, s.queue...)
+
+		s.broker.Publish(EventTaskUpdated, TaskUpdatedEvent{
+			ID:       task.ID,
+			Status:   task.Status.String(),
+			WorkerID: task.WorkerID,
+		})
+		s.tryRequestWorker()
+		return
+	}
+
+	s.logger.Warn("worker died without an executing task", "worker_id", r.WorkerID)
 }
 
 func (s *Scheduler) handleAddTask(r addTaskReq) {
