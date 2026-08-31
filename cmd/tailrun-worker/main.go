@@ -52,9 +52,13 @@ type RegisterWorkerResponse struct {
 func main() {
 	authKey := flag.String("auth-key", "", "Tailscale auth key used to join the tailnet")
 	controllerURL := flag.String("controller-url", "", "Controller URL")
-	homeDir, _ := os.UserHomeDir()
-	defaultTsnetDir := filepath.Join(homeDir, ".local", "tailrun-worker")
-	tsnetDir := flag.String("tsnet-dir", defaultTsnetDir, "Directory for tsnet state")
+	configDir, configErr := os.UserConfigDir()
+	if configErr != nil {
+		fmt.Fprintf(os.Stderr, "failed to determine user config directory: %v\n", configErr)
+		os.Exit(1)
+	}
+	defaultDataDir := filepath.Join(configDir, "tailrun-worker")
+	dataDir := flag.String("data-dir", defaultDataDir, "Directory for tailrun-worker application data and state")
 	listenAddr := flag.String("listen", ":80", "Listen address")
 	logLevel := flag.String("log-level", "info", "Log level: debug, info, warn, or error")
 	logFormat := flag.String("log-format", "json", "Log format: json or text")
@@ -80,6 +84,16 @@ func main() {
 	}
 	logger := slog.New(logHandler)
 
+	tsnetDir := filepath.Join(*dataDir, "tsnet")
+	if err := os.MkdirAll(*dataDir, 0o700); err != nil {
+		logger.Error("failed to create application data directory", "directory", *dataDir, "error", err)
+		os.Exit(1)
+	}
+	if err := os.MkdirAll(tsnetDir, 0o700); err != nil {
+		logger.Error("failed to create tsnet data directory", "directory", tsnetDir, "error", err)
+		os.Exit(1)
+	}
+
 	if !*localMode && *authKey == "" {
 		logger.Error("failed to start", "error", errors.New("missing required auth key"))
 		os.Exit(1)
@@ -98,7 +112,7 @@ func main() {
 	} else {
 		ts := &tsnet.Server{
 			AuthKey: *authKey,
-			Dir:     *tsnetDir,
+			Dir:     tsnetDir,
 		}
 		defer func() {
 			if err := ts.Close(); err != nil {
