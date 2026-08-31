@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gofrs/flock"
 	"tailscale.com/tsnet"
 
 	"github.com/n9cw/tailrun/internal/broker"
@@ -79,6 +80,22 @@ func main() {
 		logger.Error("failed to create tsnet data directory", "directory", tsnetDir, "error", err)
 		os.Exit(1)
 	}
+
+	dataLock := flock.New(filepath.Join(*dataDir, "tailrund.lock"))
+	locked, lockErr := dataLock.TryLock()
+	if lockErr != nil {
+		logger.Error("failed to lock application data directory", "directory", *dataDir, "error", lockErr)
+		os.Exit(1)
+	}
+	if !locked {
+		logger.Error("tailrund is already running", "directory", *dataDir)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := dataLock.Unlock(); err != nil {
+			logger.Warn("failed to unlock application data directory", "directory", *dataDir, "error", err)
+		}
+	}()
 
 	if !*localMode && *authKey == "" {
 		logger.Error("failed to start", "error", errors.New("missing required auth key"))

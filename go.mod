@@ -3,6 +3,7 @@ module github.com/n9cw/tailrun
 go 1.26.4
 
 require (
+	github.com/gofrs/flock v0.12.1
 	github.com/shirou/gopsutil/v4 v4.26.5
 	tailscale.com v1.100.0
 )
