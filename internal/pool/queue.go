@@ -58,10 +58,6 @@ func (p *Pool) removeWorkerFromQueue(workerID int) {
 }
 
 func (p *Pool) setWorkerStatus(w *worker, status WorkerStatus) {
-	if w.status == status {
-		return
-	}
-
 	w.status = status
 	p.broker.Publish(EventWorkerUpdated, WorkerUpdatedEvent{
 		ID:     w.id,
