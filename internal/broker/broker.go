@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+const (
+	clientBufferSize  = 50
+	heartbeatInterval = 15 * time.Second
+)
+
 type Event struct {
 	Type     string          `json:"type"`
 	Data     json.RawMessage `json:"data"`
@@ -84,7 +89,7 @@ func (b *Broker) Handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	ch := make(chan Event, 50)
+	ch := make(chan Event, clientBufferSize)
 	b.mu.Lock()
 	b.clients[ch] = struct{}{}
 	b.mu.Unlock()
@@ -107,7 +112,7 @@ func (b *Broker) Handler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// Prevent NAT devices, firewalls, and proxies from closing an idle stream
-	heartbeat := time.NewTicker(15 * time.Second)
+	heartbeat := time.NewTicker(heartbeatInterval)
 	defer heartbeat.Stop()
 
 	for {

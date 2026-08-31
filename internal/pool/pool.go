@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+const (
+	channelBufferSize   = 50
+	healthCheckInterval = 5 * time.Second
+)
+
 var (
 	ErrWorkerNotFound = errors.New("worker not found")
 )
@@ -55,13 +60,13 @@ type Pool struct {
 func New(broker Broker, logger *slog.Logger) *Pool {
 	p := &Pool{
 		workers:              make(map[int]*worker),
-		addWorkerCh:          make(chan addWorkerReq, 50),
-		getWorkersCh:         make(chan getWorkersReq, 50),
-		getWorkerCh:          make(chan getWorkerReq, 50),
-		getResourceUsageCh:   make(chan getResourceUsageReq, 50),
-		getAvailableWorkerCh: make(chan getAvailableWorkerReq, 50),
-		releaseWorkerCh:      make(chan releaseWorkerReq, 50),
-		healthCheckResultCh:  make(chan healthCheckResult, 50),
+		addWorkerCh:          make(chan addWorkerReq, channelBufferSize),
+		getWorkersCh:         make(chan getWorkersReq, channelBufferSize),
+		getWorkerCh:          make(chan getWorkerReq, channelBufferSize),
+		getResourceUsageCh:   make(chan getResourceUsageReq, channelBufferSize),
+		getAvailableWorkerCh: make(chan getAvailableWorkerReq, channelBufferSize),
+		releaseWorkerCh:      make(chan releaseWorkerReq, channelBufferSize),
+		healthCheckResultCh:  make(chan healthCheckResult, channelBufferSize),
 		httpClient:           &http.Client{Timeout: 10 * time.Second},
 		logger:               logger,
 		broker:               broker,
@@ -71,7 +76,7 @@ func New(broker Broker, logger *slog.Logger) *Pool {
 }
 
 func (p *Pool) Run(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(healthCheckInterval)
 	defer ticker.Stop()
 
 	for {

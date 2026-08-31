@@ -1,5 +1,7 @@
 package pool
 
+const maxConsecutiveHealthCheckErrors = 3
+
 type getResourceUsageResult struct {
 	usage []ResourceUsageInfo
 	err   error
@@ -62,7 +64,7 @@ func (p *Pool) handleHealthCheckResult(r healthCheckResult) {
 			"error", r.err,
 		)
 
-		if w.failedHealthChecks >= 3 {
+		if w.failedHealthChecks >= maxConsecutiveHealthCheckErrors {
 			p.setWorkerStatus(w, Dead)
 			p.removeWorkerFromQueue(w.id)
 		}

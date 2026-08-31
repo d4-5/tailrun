@@ -8,6 +8,8 @@ import (
 	"github.com/n9cw/tailrun/internal/pool"
 )
 
+const channelBufferSize = 50
+
 type Pool interface {
 	AvailableWorker() <-chan pool.Worker
 	ReleaseWorker(id int)
@@ -91,13 +93,13 @@ func New(pool Pool, broker Broker, logger *slog.Logger) *Scheduler {
 	s := &Scheduler{
 		pool:             pool,
 		logger:           logger,
-		addTaskCh:        make(chan addTaskReq, 50),
-		getTasksCh:       make(chan getTasksReq, 50),
-		getTaskCh:        make(chan getTaskReq, 50),
-		getTaskLogsCh:    make(chan getTaskLogsReq, 50),
-		addTaskLogsCh:    make(chan addTaskLogsReq, 50),
-		workerReadyCh:    make(chan workerReady, 50),
-		dispatchResultCh: make(chan dispatchResult, 50),
+		addTaskCh:        make(chan addTaskReq, channelBufferSize),
+		getTasksCh:       make(chan getTasksReq, channelBufferSize),
+		getTaskCh:        make(chan getTaskReq, channelBufferSize),
+		getTaskLogsCh:    make(chan getTaskLogsReq, channelBufferSize),
+		addTaskLogsCh:    make(chan addTaskLogsReq, channelBufferSize),
+		workerReadyCh:    make(chan workerReady, channelBufferSize),
+		dispatchResultCh: make(chan dispatchResult, channelBufferSize),
 		tasks:            make(map[int]*Task),
 		queue:            make([]int, 0),
 		nextID:           1,
