@@ -21,7 +21,10 @@ func (p *Pool) handleReleaseWorker(r releaseWorkerReq) {
 	}
 
 	if w.status != Busy {
-		p.logger.Warn("worker already available", "worker_id", r.id)
+		p.logger.Warn("worker is not busy",
+			"worker_id", r.id,
+			"status", w.status,
+		)
 		p.trySendWorker()
 		return
 	}
