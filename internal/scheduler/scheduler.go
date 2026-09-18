@@ -163,7 +163,7 @@ func (s *Scheduler) handleWorkerError(r pool.WorkerError) {
 		task.Status = Waiting
 		task.WorkerID = nil
 		task.attemptID = uuid.NewV4()
-		s.queue = append([]int{task.ID}, s.queue...)
+		s.queue = append(s.queue, task.ID)
 
 		s.broker.Publish(EventTaskUpdated, TaskUpdatedEvent{
 			ID:       task.ID,
