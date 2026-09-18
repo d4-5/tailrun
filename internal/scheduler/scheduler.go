@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"uuid"
 
 	"github.com/n9cw/tailrun/internal/pool"
 )
@@ -21,8 +22,9 @@ type Broker interface {
 }
 
 var (
-	ErrTaskNotFound     = errors.New("task not found")
-	ErrTaskLogsNotFound = errors.New("task logs not found")
+	ErrTaskNotFound       = errors.New("task not found")
+	ErrTaskLogsNotFound   = errors.New("task logs not found")
+	ErrTaskAttemptExpired = errors.New("task attempt expired")
 )
 
 type addTaskReq struct {
@@ -56,11 +58,12 @@ type getTaskLogsResult struct {
 }
 
 type addTaskLogsReq struct {
-	id      int
-	stdout  string
-	stderr  string
-	success bool
-	reply   chan error
+	id        int
+	stdout    string
+	stderr    string
+	success   bool
+	attemptID uuid.UUID
+	reply     chan error
 }
 
 type workerReady struct {
@@ -68,13 +71,14 @@ type workerReady struct {
 }
 
 type dispatchResult struct {
-	taskID   int
-	workerID int
-	err      error
+	taskID    int
+	workerID  int
+	attemptID uuid.UUID
+	err       error
 }
 
 type Scheduler struct {
-	tasks            map[int]*Task
+	tasks            map[int]*task
 	queue            []int
 	pool             Pool
 	logger           *slog.Logger
@@ -103,7 +107,7 @@ func New(pool Pool, broker Broker, logger *slog.Logger) *Scheduler {
 		workerReadyCh:    make(chan workerReady, channelBufferSize),
 		dispatchResultCh: make(chan dispatchResult, channelBufferSize),
 		workerErrorCh:    pool.WorkerError(),
-		tasks:            make(map[int]*Task),
+		tasks:            make(map[int]*task),
 		queue:            make([]int, 0),
 		nextID:           1,
 		broker:           broker,
@@ -158,6 +162,7 @@ func (s *Scheduler) handleWorkerError(r pool.WorkerError) {
 
 		task.Status = Waiting
 		task.WorkerID = nil
+		task.attemptID = uuid.NewV4()
 		s.queue = append([]int{task.ID}, s.queue...)
 
 		s.broker.Publish(EventTaskUpdated, TaskUpdatedEvent{
@@ -175,12 +180,13 @@ func (s *Scheduler) handleWorkerError(r pool.WorkerError) {
 func (s *Scheduler) handleAddTask(r addTaskReq) {
 	id := s.nextID
 	s.nextID++
-	task := &Task{
-		ID:      id,
-		Name:    r.newTask.Name,
-		Command: r.newTask.Command,
-		EnvVars: r.newTask.EnvVars,
-		Status:  Waiting,
+	task := &task{
+		ID:        id,
+		Name:      r.newTask.Name,
+		Command:   r.newTask.Command,
+		EnvVars:   r.newTask.EnvVars,
+		Status:    Waiting,
+		attemptID: uuid.NewV4(),
 	}
 	s.tasks[id] = task
 	s.queue = append(s.queue, id)
@@ -274,6 +280,11 @@ func (s *Scheduler) handleAddTaskLogs(r addTaskLogsReq) {
 		r.reply <- ErrTaskNotFound
 		return
 	}
+	if t.attemptID != r.attemptID {
+		r.reply <- ErrTaskAttemptExpired
+		return
+	}
+	t.attemptID = uuid.Nil()
 	t.Stdout = r.stdout
 	t.Stderr = r.stderr
 	if r.success {
@@ -315,17 +326,21 @@ func (s *Scheduler) handleDispatchResult(r dispatchResult) {
 		)
 
 		t, ok := s.tasks[r.taskID]
-		if ok {
+		if !ok {
+			s.logger.Warn("failed to find task for dispatch result", "task_id", r.taskID)
+		} else if t.attemptID != r.attemptID {
+			s.logger.Warn("ignoring stale dispatch result", "task_id", r.taskID, "worker_id", r.workerID)
+			return
+		} else {
 			t.Status = Waiting
 			t.WorkerID = nil
+			t.attemptID = uuid.NewV4()
 			s.queue = append(s.queue, r.taskID)
 			s.broker.Publish(EventTaskUpdated, TaskUpdatedEvent{
 				ID:       t.ID,
 				Status:   t.Status.String(),
 				WorkerID: t.WorkerID,
 			})
-		} else {
-			s.logger.Warn("failed to find task for dispatch result", "task_id", r.taskID)
 		}
 
 		s.pool.ReleaseWorker(r.workerID)
@@ -364,8 +379,9 @@ func (s *Scheduler) dispatchTask(w pool.Worker) {
 	}
 
 	workerID := w.ID()
-	task.Status = Executing
 	task.WorkerID = &workerID
+	task.Status = Executing
+	attemptID := task.attemptID
 	s.broker.Publish(EventTaskUpdated, TaskUpdatedEvent{
 		ID:       task.ID,
 		Status:   task.Status.String(),
@@ -373,17 +389,19 @@ func (s *Scheduler) dispatchTask(w pool.Worker) {
 	})
 
 	taskInfo := pool.Task{
-		ID:      task.ID,
-		Command: task.Command,
-		EnvVars: task.EnvVars,
+		ID:        task.ID,
+		AttemptID: attemptID,
+		Command:   task.Command,
+		EnvVars:   task.EnvVars,
 	}
 
 	go func() {
 		err := w.Execute(taskInfo)
 		s.dispatchResultCh <- dispatchResult{
-			taskID:   task.ID,
-			workerID: workerID,
-			err:      err,
+			taskID:    task.ID,
+			workerID:  workerID,
+			attemptID: attemptID,
+			err:       err,
 		}
 	}()
 }
@@ -414,8 +432,8 @@ func (s *Scheduler) GetTaskLogs(id int) (stdout, stderr string, err error) {
 	return res.stdout, res.stderr, res.err
 }
 
-func (s *Scheduler) AddTaskLogs(id int, stdout, stderr string, success bool) error {
+func (s *Scheduler) AddTaskLogs(id int, stdout, stderr string, success bool, attemptID uuid.UUID) error {
 	reply := make(chan error, 1)
-	s.addTaskLogsCh <- addTaskLogsReq{id: id, stdout: stdout, stderr: stderr, success: success, reply: reply}
+	s.addTaskLogsCh <- addTaskLogsReq{id: id, stdout: stdout, stderr: stderr, success: success, attemptID: attemptID, reply: reply}
 	return <-reply
 }

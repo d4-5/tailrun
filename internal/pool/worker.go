@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+	"uuid"
 )
 
 const (
@@ -35,9 +36,10 @@ type Worker interface {
 }
 
 type Task struct {
-	ID      int               `json:"id"`
-	Command string            `json:"command"`
-	EnvVars map[string]string `json:"envVars"`
+	ID        int               `json:"id"`
+	Command   string            `json:"command"`
+	EnvVars   map[string]string `json:"envVars"`
+	AttemptID uuid.UUID         `json:"attemptId"`
 }
 
 type WorkerStatus int

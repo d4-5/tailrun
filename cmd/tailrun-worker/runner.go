@@ -13,18 +13,21 @@ import (
 	"os/exec"
 	"sync"
 	"time"
+	"uuid"
 )
 
 type Task struct {
-	ID      int               `json:"id"`
-	Command string            `json:"command"`
-	EnvVars map[string]string `json:"envVars"`
+	ID        int               `json:"id"`
+	Command   string            `json:"command"`
+	EnvVars   map[string]string `json:"envVars"`
+	AttemptID uuid.UUID         `json:"attemptId"`
 }
 
 type AddTaskLogsRequest struct {
-	Stdout  string `json:"stdout"`
-	Stderr  string `json:"stderr"`
-	Success bool   `json:"success"`
+	Stdout    string    `json:"stdout"`
+	Stderr    string    `json:"stderr"`
+	Success   bool      `json:"success"`
+	AttemptID uuid.UUID `json:"attemptId"`
 }
 
 type Runner struct {
@@ -97,14 +100,15 @@ func (r *Runner) execute(task Task) {
 	r.running = false
 	r.mu.Unlock()
 
-	go r.sendLogs(task.ID, stdout, stderr, success)
+	go r.sendLogs(task.ID, task.AttemptID, stdout, stderr, success)
 }
 
-func (r *Runner) sendLogs(taskID int, stdout, stderr string, success bool) {
+func (r *Runner) sendLogs(taskID int, attemptID uuid.UUID, stdout, stderr string, success bool) {
 	reqBody := AddTaskLogsRequest{
-		Stdout:  stdout,
-		Stderr:  stderr,
-		Success: success,
+		Stdout:    stdout,
+		Stderr:    stderr,
+		Success:   success,
+		AttemptID: attemptID,
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {

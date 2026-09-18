@@ -1,6 +1,9 @@
 package scheduler
 
-import "fmt"
+import (
+	"fmt"
+	"uuid"
+)
 
 const (
 	EventTaskCreated = "task_created"
@@ -45,15 +48,16 @@ func (s TaskStatus) String() string {
 	}
 }
 
-type Task struct {
-	ID       int
-	WorkerID *int
-	Name     string
-	Command  string
-	Status   TaskStatus
-	EnvVars  map[string]string
-	Stdout   string
-	Stderr   string
+type task struct {
+	ID        int
+	WorkerID  *int
+	Name      string
+	Command   string
+	Status    TaskStatus
+	EnvVars   map[string]string
+	Stdout    string
+	Stderr    string
+	attemptID uuid.UUID
 }
 
 type TaskInfo struct {

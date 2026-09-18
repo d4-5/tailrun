@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"uuid"
 
 	"github.com/n9cw/tailrun/internal/scheduler"
 )
@@ -14,7 +15,7 @@ type Schedule interface {
 	GetTask(id int) (scheduler.TaskInfo, error)
 	GetTasks() []scheduler.TaskInfo
 	GetTaskLogs(id int) (stdout, stderr string, err error)
-	AddTaskLogs(id int, stdout, stderr string, success bool) error
+	AddTaskLogs(id int, stdout, stderr string, success bool, attemptID uuid.UUID) error
 }
 
 type CreateTaskRequest struct {
@@ -38,9 +39,10 @@ type TaskResponse struct {
 }
 
 type AddTaskLogsRequest struct {
-	Stdout  string `json:"stdout"`
-	Stderr  string `json:"stderr"`
-	Success bool   `json:"success"`
+	Stdout    string    `json:"stdout"`
+	Stderr    string    `json:"stderr"`
+	Success   bool      `json:"success"`
+	AttemptID uuid.UUID `json:"attemptId"`
 }
 
 type TaskLogsResponse struct {
@@ -150,10 +152,18 @@ func (h *TaskHandler) HandleAddTaskLogs(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if req.AttemptID == uuid.Nil() {
+		writeError(w, http.StatusBadRequest, "attemptId is required")
+		return
+	}
 
-	if err := h.schedule.AddTaskLogs(id, req.Stdout, req.Stderr, req.Success); err != nil {
+	if err := h.schedule.AddTaskLogs(id, req.Stdout, req.Stderr, req.Success, req.AttemptID); err != nil {
 		if errors.Is(err, scheduler.ErrTaskNotFound) {
 			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
+		if errors.Is(err, scheduler.ErrTaskAttemptExpired) {
+			writeError(w, http.StatusConflict, "task attempt expired")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "internal server error")
