@@ -7,11 +7,17 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"os/exec"
 	"time"
 	"uuid"
+)
+
+const (
+	logRetryInitialDelay = 500 * time.Millisecond
+	logRetryMaxDelay     = 30 * time.Second
 )
 
 type Task struct {
@@ -208,40 +214,70 @@ func (r *Runner) sendLogs(taskID int, attemptID uuid.UUID, stdout, stderr string
 	}
 
 	url := fmt.Sprintf("%s/api/tasks/%d/logs", r.controllerURL, taskID)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		r.logger.Error("failed to create log upload request",
-			"task_id", taskID,
-			"error", err,
-		)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := r.httpClient.Do(req)
-	if err != nil {
-		r.logger.Error("failed to send logs to controller",
-			"task_id", taskID,
-			"error", err,
-		)
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusNoContent {
-		respBody, err := io.ReadAll(resp.Body)
+	delay := logRetryInitialDelay
+	for attempt := 1; ; attempt++ {
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
-			r.logger.Error("failed to read response body",
+			r.logger.Error("failed to create log upload request",
 				"task_id", taskID,
 				"error", err,
 			)
 			return
 		}
+		req.Header.Set("Content-Type", "application/json")
 
-		r.logger.Error("failed to send task logs to controller",
-			"task_id", taskID,
-			"status", resp.StatusCode,
-			"response", string(respBody),
-		)
+		delayWithJitter := delay + time.Duration(rand.Int64N(int64(delay/5)+1))
+		if delayWithJitter > logRetryMaxDelay {
+			delayWithJitter = logRetryInitialDelay
+		}
+
+		resp, err := r.httpClient.Do(req)
+		if err == nil {
+			if resp.StatusCode == http.StatusNoContent {
+				_ = resp.Body.Close()
+				return
+			}
+
+			respBody, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+
+			switch {
+			case resp.StatusCode == http.StatusRequestTimeout ||
+				resp.StatusCode == http.StatusTooManyRequests ||
+				(resp.StatusCode >= http.StatusInternalServerError && resp.StatusCode <= 599):
+				r.logger.Warn("failed to send task logs, retrying",
+					"task_id", taskID,
+					"attempt", attempt,
+					"status", resp.StatusCode,
+					"response", string(respBody),
+					"read_error", readErr,
+					"retry_in", delayWithJitter,
+				)
+			default:
+				r.logger.Error("failed to send task logs to controller",
+					"task_id", taskID,
+					"status", resp.StatusCode,
+					"response", string(respBody),
+					"read_error", readErr,
+				)
+				return
+			}
+		} else {
+			r.logger.Warn("failed to send task logs, retrying",
+				"task_id", taskID,
+				"attempt", attempt,
+				"error", err,
+				"retry_in", delayWithJitter,
+			)
+		}
+
+		time.Sleep(delayWithJitter)
+		if delay < logRetryMaxDelay {
+			delay *= 2
+			if delay > logRetryMaxDelay {
+				delay = logRetryMaxDelay
+			}
+		}
 	}
 }
