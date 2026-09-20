@@ -284,7 +284,10 @@ func (s *Scheduler) handleAddTaskLogs(r addTaskLogsReq) {
 		r.reply <- ErrTaskAttemptExpired
 		return
 	}
-	t.attemptID = uuid.Nil()
+	if t.Status == Finished || t.Status == Failed {
+		r.reply <- nil
+		return
+	}
 	t.Stdout = r.stdout
 	t.Stderr = r.stderr
 	if r.success {
@@ -328,7 +331,7 @@ func (s *Scheduler) handleDispatchResult(r dispatchResult) {
 		t, ok := s.tasks[r.taskID]
 		if !ok {
 			s.logger.Warn("failed to find task for dispatch result", "task_id", r.taskID)
-		} else if t.attemptID != r.attemptID {
+		} else if t.attemptID != r.attemptID || t.Status != Executing {
 			s.logger.Warn("ignoring stale dispatch result", "task_id", r.taskID, "worker_id", r.workerID)
 			return
 		} else {
