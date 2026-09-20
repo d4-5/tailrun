@@ -158,6 +158,8 @@ func main() {
 	}()
 
 	runner := NewRunner(*controllerURL, logger)
+	go runner.Run()
+
 	h := NewHandler(runner, logger)
 
 	mux := http.NewServeMux()

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"uuid"
 
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
@@ -50,10 +51,17 @@ func (h *Handler) HandlePostTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.runner.Start(task); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
+	if task.AttemptID == uuid.Nil() {
+		writeError(w, http.StatusBadRequest, "attemptId is required")
 		return
 	}
+
+	if task.DispatchSequence == 0 {
+		writeError(w, http.StatusBadRequest, "invalid dispatchSequence")
+		return
+	}
+
+	h.runner.Start(task)
 
 	w.WriteHeader(http.StatusAccepted)
 }

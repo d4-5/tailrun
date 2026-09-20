@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"time"
 	"uuid"
 )
@@ -31,7 +32,7 @@ type WorkerRegisteredEvent struct {
 }
 
 type Worker interface {
-	Execute(task Task) error
+	Dispatch(task Task) <-chan error
 	ID() int
 }
 
@@ -40,6 +41,11 @@ type Task struct {
 	Command   string            `json:"command"`
 	EnvVars   map[string]string `json:"envVars"`
 	AttemptID uuid.UUID         `json:"attemptId"`
+}
+
+type taskRequest struct {
+	Task
+	DispatchSequence uint64 `json:"dispatchSequence"`
 }
 
 type WorkerStatus int
@@ -91,6 +97,8 @@ type worker struct {
 	memory   *Bytes
 	storage  *Bytes
 
+	dispatchSequence atomic.Uint64
+
 	healthCheckInFlight bool
 	failedHealthChecks  int
 
@@ -119,8 +127,22 @@ type WorkerInfo struct {
 	Storage  *Bytes
 }
 
-func (w *worker) Execute(task Task) error {
-	body, err := json.Marshal(task)
+func (w *worker) Dispatch(task Task) <-chan error {
+	resultCh := make(chan error, 1)
+	dispatchSequence := w.dispatchSequence.Add(1)
+
+	go func() {
+		resultCh <- w.execute(task, dispatchSequence)
+	}()
+
+	return resultCh
+}
+
+func (w *worker) execute(task Task, dispatchSequence uint64) error {
+	body, err := json.Marshal(taskRequest{
+		Task:             task,
+		DispatchSequence: dispatchSequence,
+	})
 	if err != nil {
 		return err
 	}

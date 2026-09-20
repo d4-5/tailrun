@@ -395,8 +395,9 @@ func (s *Scheduler) dispatchTask(w pool.Worker) {
 		EnvVars:   task.EnvVars,
 	}
 
+	resultCh := w.Dispatch(taskInfo)
 	go func() {
-		err := w.Execute(taskInfo)
+		err := <-resultCh
 		s.dispatchResultCh <- dispatchResult{
 			taskID:    task.ID,
 			workerID:  workerID,

@@ -4,23 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
-	"sync"
 	"time"
 	"uuid"
 )
 
 type Task struct {
-	ID        int               `json:"id"`
-	Command   string            `json:"command"`
-	EnvVars   map[string]string `json:"envVars"`
-	AttemptID uuid.UUID         `json:"attemptId"`
+	ID               int               `json:"id"`
+	Command          string            `json:"command"`
+	EnvVars          map[string]string `json:"envVars"`
+	AttemptID        uuid.UUID         `json:"attemptId"`
+	DispatchSequence uint64            `json:"dispatchSequence"`
 }
 
 type AddTaskLogsRequest struct {
@@ -30,9 +29,30 @@ type AddTaskLogsRequest struct {
 	AttemptID uuid.UUID `json:"attemptId"`
 }
 
+type startTaskRequest struct {
+	task Task
+}
+
+type statusRequest struct {
+	reply chan bool
+}
+
+type executionResult struct {
+	task      Task
+	stdout    string
+	stderr    string
+	success   bool
+	cancelled bool
+}
+
 type Runner struct {
-	mu            sync.Mutex
-	running       bool
+	startTaskCh   chan startTaskRequest
+	statusCh      chan statusRequest
+	completionCh  chan executionResult
+	activeTask    *Task
+	cancelActive  context.CancelFunc
+	pendingTask   *Task
+	lastSequence  uint64
 	controllerURL string
 	httpClient    *http.Client
 	logger        *slog.Logger
@@ -40,6 +60,9 @@ type Runner struct {
 
 func NewRunner(controllerURL string, logger *slog.Logger) *Runner {
 	return &Runner{
+		startTaskCh:   make(chan startTaskRequest, 50),
+		statusCh:      make(chan statusRequest, 10),
+		completionCh:  make(chan executionResult, 1),
 		controllerURL: controllerURL,
 		httpClient:    &http.Client{Timeout: 5 * time.Second},
 		logger:        logger,
@@ -47,29 +70,108 @@ func NewRunner(controllerURL string, logger *slog.Logger) *Runner {
 }
 
 func (r *Runner) Status() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.running
+	reply := make(chan bool, 1)
+	r.statusCh <- statusRequest{reply: reply}
+	return <-reply
 }
 
-func (r *Runner) Start(task Task) error {
-	r.mu.Lock()
-	if r.running {
-		r.mu.Unlock()
-		return fmt.Errorf("worker is already running task")
+func (r *Runner) Start(task Task) {
+	r.startTaskCh <- startTaskRequest{task: task}
+}
+
+func (r *Runner) Run() {
+	for {
+		select {
+		case req := <-r.startTaskCh:
+			r.handleStartTask(req.task)
+
+		case req := <-r.statusCh:
+			req.reply <- r.activeTask != nil
+
+		case result := <-r.completionCh:
+			r.handleCompletion(result)
+		}
 	}
-	r.running = true
-	r.mu.Unlock()
-
-	go r.execute(task)
-
-	return nil
 }
 
-func (r *Runner) execute(task Task) {
+func (r *Runner) handleStartTask(task Task) {
+	if task.DispatchSequence <= r.lastSequence {
+		r.logger.Debug("ignoring stale task dispatch",
+			"task_id", task.ID,
+			"attempt_id", task.AttemptID,
+			"dispatch_sequence", task.DispatchSequence,
+			"last_dispatch_sequence", r.lastSequence,
+		)
+		return
+	}
+	r.lastSequence = task.DispatchSequence
+
+	if r.activeTask == nil {
+		r.startTask(task)
+		return
+	}
+
+	r.logger.Info("cancelling previous task",
+		"task_id", r.activeTask.ID,
+		"attempt_id", r.activeTask.AttemptID,
+	)
+	r.cancelActive()
+	r.pendingTask = &task
+}
+
+func (r *Runner) startTask(task Task) {
+	ctx, cancel := context.WithCancel(context.Background())
+	r.activeTask = &task
+	r.cancelActive = cancel
+	go r.execute(ctx, task)
+}
+
+func (r *Runner) handleCompletion(result executionResult) {
+	if r.activeTask == nil {
+		r.logger.Warn("ignoring task completion with no active task",
+			"task_id", result.task.ID,
+			"dispatch_sequence", result.task.DispatchSequence,
+		)
+		return
+	}
+
+	if result.task.DispatchSequence != r.activeTask.DispatchSequence {
+		return
+	}
+
+	r.activeTask = nil
+	r.cancelActive()
+	r.cancelActive = nil
+
+	if result.cancelled {
+		r.logger.Info("task execution cancelled", "task_id", result.task.ID)
+	} else {
+		r.logger.Info("task execution completed",
+			"task_id", result.task.ID,
+			"success", result.success,
+		)
+		go r.sendLogs(
+			result.task.ID,
+			result.task.AttemptID,
+			result.stdout,
+			result.stderr,
+			result.success,
+		)
+	}
+
+	if r.pendingTask == nil {
+		return
+	}
+
+	next := *r.pendingTask
+	r.pendingTask = nil
+	r.startTask(next)
+}
+
+func (r *Runner) execute(ctx context.Context, task Task) {
 	r.logger.Info("starting task execution", "task_id", task.ID, "command", task.Command)
 
-	cmd := exec.Command("/bin/sh", "-c", task.Command)
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", task.Command)
 	cmd.Env = os.Environ()
 	for k, v := range task.EnvVars {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
@@ -80,27 +182,13 @@ func (r *Runner) execute(task Task) {
 	cmd.Stderr = &stderrBuf
 
 	err := cmd.Run()
-
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return
-		}
+	r.completionCh <- executionResult{
+		task:      task,
+		stdout:    stdoutBuf.String(),
+		stderr:    stderrBuf.String(),
+		success:   err == nil,
+		cancelled: ctx.Err() != nil,
 	}
-
-	var success bool
-	if err == nil {
-		success = true
-	}
-	stdout := stdoutBuf.String()
-	stderr := stderrBuf.String()
-
-	r.logger.Info("task execution completed", "task_id", task.ID, "success", success)
-
-	r.mu.Lock()
-	r.running = false
-	r.mu.Unlock()
-
-	go r.sendLogs(task.ID, task.AttemptID, stdout, stderr, success)
 }
 
 func (r *Runner) sendLogs(taskID int, attemptID uuid.UUID, stdout, stderr string, success bool) {
