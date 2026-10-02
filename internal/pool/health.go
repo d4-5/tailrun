@@ -1,13 +1,16 @@
 package pool
 
-import "errors"
+import (
+	"errors"
+	"uuid"
+)
 
 const maxConsecutiveHealthCheckErrors = 3
 
 var ErrWorkerDied = errors.New("worker died")
 
 type WorkerError struct {
-	WorkerID int
+	WorkerID uuid.UUID
 	Err      error
 }
 
@@ -17,12 +20,12 @@ type getResourceUsageResult struct {
 }
 
 type getResourceUsageReq struct {
-	id    int
+	id    uuid.UUID
 	reply chan getResourceUsageResult
 }
 
 type healthCheckResult struct {
-	workerID int
+	workerID uuid.UUID
 	health   HealthResponse
 	err      error
 }
@@ -117,7 +120,7 @@ func (p *Pool) handleGetResourceUsage(r getResourceUsageReq) {
 	r.reply <- getResourceUsageResult{usage: usage}
 }
 
-func (p *Pool) GetResourceUsage(id int) ([]ResourceUsageInfo, error) {
+func (p *Pool) GetResourceUsage(id uuid.UUID) ([]ResourceUsageInfo, error) {
 	reply := make(chan getResourceUsageResult, 1)
 	p.getResourceUsageCh <- getResourceUsageReq{id: id, reply: reply}
 	res := <-reply

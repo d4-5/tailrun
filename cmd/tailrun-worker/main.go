@@ -50,10 +50,6 @@ type RegisterWorkerRequest struct {
 	Storage  *Bytes    `json:"storage,omitempty"`
 }
 
-type RegisterWorkerResponse struct {
-	ID int `json:"id"`
-}
-
 func main() {
 	authKey := flag.String("auth-key", "", "Tailscale auth key used to join the tailnet")
 	controllerURL := flag.String("controller-url", "", "Controller URL")
@@ -266,12 +262,8 @@ func registerWorker(controllerURL, workerURL string, workerID uuid.UUID, workerN
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode == http.StatusCreated {
-		var respData RegisterWorkerResponse
-		if err := json.NewDecoder(resp.Body).Decode(&respData); err != nil {
-			return fmt.Errorf("failed to decode registration response: %w", err)
-		}
-		logger.Info("successfully registered worker", "worker_id", respData.ID)
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		logger.Info("successfully registered worker", "worker_id", workerID)
 		return nil
 	}
 

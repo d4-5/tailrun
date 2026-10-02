@@ -33,7 +33,7 @@ type TaskResponse struct {
 	Name          string            `json:"name"`
 	Command       string            `json:"command"`
 	Status        string            `json:"status"`
-	WorkerID      *int              `json:"workerId,omitempty"`
+	WorkerID      *uuid.UUID        `json:"workerId,omitempty"`
 	EnvVars       map[string]string `json:"envVars,omitempty"`
 	QueuePosition *int              `json:"queuePosition,omitempty"`
 }

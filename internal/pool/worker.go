@@ -16,25 +16,25 @@ const (
 )
 
 type WorkerUpdatedEvent struct {
-	ID     int    `json:"id"`
-	Status string `json:"status"`
+	ID     uuid.UUID `json:"id"`
+	Status string    `json:"status"`
 }
 
 type WorkerRegisteredEvent struct {
-	ID       int    `json:"id"`
-	Name     string `json:"name"`
-	URL      string `json:"url"`
-	Hostname string `json:"hostname"`
-	Status   string `json:"status"`
-	CPUCores int    `json:"cpuCores"`
-	OS       string `json:"os"`
-	Memory   *Bytes `json:"memory,omitempty"`
-	Storage  *Bytes `json:"storage,omitempty"`
+	ID       uuid.UUID `json:"id"`
+	Name     string    `json:"name"`
+	URL      string    `json:"url"`
+	Hostname string    `json:"hostname"`
+	Status   string    `json:"status"`
+	CPUCores int       `json:"cpuCores"`
+	OS       string    `json:"os"`
+	Memory   *Bytes    `json:"memory,omitempty"`
+	Storage  *Bytes    `json:"storage,omitempty"`
 }
 
 type Worker interface {
 	Dispatch(task Task) <-chan error
-	ID() int
+	ID() uuid.UUID
 }
 
 type Task struct {
@@ -89,7 +89,7 @@ type ResourceUsageInfo struct {
 }
 
 type worker struct {
-	id       int
+	id       uuid.UUID
 	name     string
 	url      string
 	hostname string
@@ -110,6 +110,7 @@ type worker struct {
 }
 
 type NewWorker struct {
+	ID       uuid.UUID
 	Name     string
 	URL      string
 	Hostname string
@@ -120,7 +121,7 @@ type NewWorker struct {
 }
 
 type WorkerInfo struct {
-	ID       int
+	ID       uuid.UUID
 	Name     string
 	URL      string
 	Hostname string
@@ -175,7 +176,7 @@ func (w *worker) execute(task Task, dispatchSequence uint64) error {
 	return nil
 }
 
-func (w *worker) ID() int {
+func (w *worker) ID() uuid.UUID {
 	return w.id
 }
 

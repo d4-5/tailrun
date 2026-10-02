@@ -11,9 +11,9 @@ const (
 )
 
 type TaskUpdatedEvent struct {
-	ID       int    `json:"id"`
-	Status   string `json:"status"`
-	WorkerID *int   `json:"workerId,omitempty"`
+	ID       int        `json:"id"`
+	Status   string     `json:"status"`
+	WorkerID *uuid.UUID `json:"workerId,omitempty"`
 }
 
 type TaskCreatedEvent struct {
@@ -50,7 +50,7 @@ func (s TaskStatus) String() string {
 
 type task struct {
 	ID        int
-	WorkerID  *int
+	WorkerID  *uuid.UUID
 	Name      string
 	Command   string
 	Status    TaskStatus
@@ -62,7 +62,7 @@ type task struct {
 
 type TaskInfo struct {
 	ID            int
-	WorkerID      *int
+	WorkerID      *uuid.UUID
 	Name          string
 	Command       string
 	Status        TaskStatus

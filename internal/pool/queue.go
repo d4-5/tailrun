@@ -1,11 +1,13 @@
 package pool
 
+import "uuid"
+
 type getAvailableWorkerReq struct {
 	reply chan Worker
 }
 
 type releaseWorkerReq struct {
-	id int
+	id uuid.UUID
 }
 
 func (p *Pool) handleGetAvailableWorker(r getAvailableWorkerReq) {
@@ -48,8 +50,8 @@ func (p *Pool) trySendWorker() {
 	}
 }
 
-func (p *Pool) removeWorkerFromQueue(workerID int) {
-	filtered := make([]int, 0, len(p.workersQueue))
+func (p *Pool) removeWorkerFromQueue(workerID uuid.UUID) {
+	filtered := make([]uuid.UUID, 0, len(p.workersQueue))
 
 	for _, id := range p.workersQueue {
 		if id != workerID {
@@ -74,6 +76,6 @@ func (p *Pool) AvailableWorker() <-chan Worker {
 	return reply
 }
 
-func (p *Pool) ReleaseWorker(id int) {
+func (p *Pool) ReleaseWorker(id uuid.UUID) {
 	p.releaseWorkerCh <- releaseWorkerReq{id: id}
 }

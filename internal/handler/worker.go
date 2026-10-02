@@ -4,21 +4,22 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/n9cw/tailrun/internal/pool"
 )
 
 type Workers interface {
-	AddWorker(info pool.NewWorker) int
+	AddWorker(info pool.NewWorker)
 	GetWorkers() []pool.WorkerInfo
-	GetWorker(id int) (pool.WorkerInfo, error)
-	GetResourceUsage(id int) ([]pool.ResourceUsageInfo, error)
+	GetWorker(id uuid.UUID) (pool.WorkerInfo, error)
+	GetResourceUsage(id uuid.UUID) ([]pool.ResourceUsageInfo, error)
 }
 
 type RegisterWorkerRequest struct {
+	WorkerID uuid.UUID   `json:"workerId"`
 	Name     string      `json:"name"`
 	URL      string      `json:"url"`
 	Hostname string      `json:"hostname"`
@@ -28,12 +29,8 @@ type RegisterWorkerRequest struct {
 	Storage  *pool.Bytes `json:"storage,omitempty"`
 }
 
-type RegisterWorkerResponse struct {
-	ID int `json:"id"`
-}
-
 type WorkerResponse struct {
-	ID       int         `json:"id"`
+	ID       uuid.UUID   `json:"id"`
 	Name     string      `json:"name"`
 	URL      string      `json:"url"`
 	Hostname string      `json:"hostname"`
@@ -75,6 +72,10 @@ func (h *WorkerHandler) HandleRegisterWorker(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if req.WorkerID == uuid.Nil() {
+		writeError(w, http.StatusBadRequest, "workerId is required")
+		return
+	}
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
 		writeError(w, http.StatusBadRequest, "name is required")
@@ -109,7 +110,8 @@ func (h *WorkerHandler) HandleRegisterWorker(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	id := h.workers.AddWorker(pool.NewWorker{
+	h.workers.AddWorker(pool.NewWorker{
+		ID:       req.WorkerID,
 		Name:     req.Name,
 		URL:      req.URL,
 		Hostname: req.Hostname,
@@ -119,7 +121,7 @@ func (h *WorkerHandler) HandleRegisterWorker(w http.ResponseWriter, r *http.Requ
 		Storage:  req.Storage,
 	})
 
-	writeJSON(w, http.StatusCreated, RegisterWorkerResponse{ID: id})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *WorkerHandler) HandleGetWorkers(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +147,7 @@ func (h *WorkerHandler) HandleGetWorkers(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *WorkerHandler) HandleGetWorker(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.Atoi(r.PathValue("id"))
+	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid worker id")
 		return
@@ -176,7 +178,7 @@ func (h *WorkerHandler) HandleGetWorker(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *WorkerHandler) HandleGetResourceUsage(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.Atoi(r.PathValue("id"))
+	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid worker id")
 		return

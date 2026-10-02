@@ -14,7 +14,7 @@ const channelBufferSize = 50
 type Pool interface {
 	AvailableWorker() <-chan pool.Worker
 	WorkerError() <-chan pool.WorkerError
-	ReleaseWorker(id int)
+	ReleaseWorker(id uuid.UUID)
 }
 
 type Broker interface {
@@ -72,7 +72,7 @@ type workerReady struct {
 
 type dispatchResult struct {
 	taskID    int
-	workerID  int
+	workerID  uuid.UUID
 	attemptID uuid.UUID
 	err       error
 }

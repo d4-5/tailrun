@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+	"uuid"
 )
 
 const (
@@ -23,7 +24,7 @@ type Broker interface {
 
 type addWorkerReq struct {
 	info  NewWorker
-	reply chan int
+	reply chan struct{}
 }
 
 type getWorkersReq struct {
@@ -36,13 +37,12 @@ type getWorkerResult struct {
 }
 
 type getWorkerReq struct {
-	id    int
+	id    uuid.UUID
 	reply chan getWorkerResult
 }
 
 type Pool struct {
-	workers              map[int]*worker
-	nextID               int
+	workers              map[uuid.UUID]*worker
 	addWorkerCh          chan addWorkerReq
 	getWorkersCh         chan getWorkersReq
 	getWorkerCh          chan getWorkerReq
@@ -51,7 +51,7 @@ type Pool struct {
 	releaseWorkerCh      chan releaseWorkerReq
 	healthCheckResultCh  chan healthCheckResult
 	workerErrorCh        chan WorkerError
-	workersQueue         []int
+	workersQueue         []uuid.UUID
 	waitQueue            []chan Worker
 	httpClient           *http.Client
 	logger               *slog.Logger
@@ -60,7 +60,7 @@ type Pool struct {
 
 func New(broker Broker, logger *slog.Logger) *Pool {
 	p := &Pool{
-		workers:              make(map[int]*worker),
+		workers:              make(map[uuid.UUID]*worker),
 		addWorkerCh:          make(chan addWorkerReq, channelBufferSize),
 		getWorkersCh:         make(chan getWorkersReq, channelBufferSize),
 		getWorkerCh:          make(chan getWorkerReq, channelBufferSize),
@@ -106,10 +106,21 @@ func (p *Pool) Run(ctx context.Context) {
 }
 
 func (p *Pool) handleAddWorker(r addWorkerReq) {
-	id := p.nextID
-	p.nextID++
+	id := r.info.ID
+	if w, ok := p.workers[id]; ok {
+		w.name = r.info.Name
+		w.url = r.info.URL
+		w.hostname = r.info.Hostname
+		w.cpuCores = r.info.CPUCores
+		w.os = r.info.OS
+		w.memory = r.info.Memory
+		w.storage = r.info.Storage
+		r.reply <- struct{}{}
+		return
+	}
+
 	w := &worker{
-		id:         id,
+		id:         r.info.ID,
 		name:       r.info.Name,
 		url:        r.info.URL,
 		hostname:   r.info.Hostname,
@@ -136,7 +147,7 @@ func (p *Pool) handleAddWorker(r addWorkerReq) {
 	})
 
 	p.trySendWorker()
-	r.reply <- id
+	r.reply <- struct{}{}
 }
 
 func (p *Pool) handleGetWorkers(r getWorkersReq) {
@@ -178,10 +189,10 @@ func (p *Pool) handleGetWorker(r getWorkerReq) {
 	}
 }
 
-func (p *Pool) AddWorker(info NewWorker) int {
-	reply := make(chan int, 1)
+func (p *Pool) AddWorker(info NewWorker) {
+	reply := make(chan struct{}, 1)
 	p.addWorkerCh <- addWorkerReq{info: info, reply: reply}
-	return <-reply
+	<-reply
 }
 
 func (p *Pool) GetWorkers() []WorkerInfo {
@@ -190,7 +201,7 @@ func (p *Pool) GetWorkers() []WorkerInfo {
 	return <-reply
 }
 
-func (p *Pool) GetWorker(id int) (WorkerInfo, error) {
+func (p *Pool) GetWorker(id uuid.UUID) (WorkerInfo, error) {
 	reply := make(chan getWorkerResult, 1)
 	p.getWorkerCh <- getWorkerReq{id: id, reply: reply}
 	res := <-reply
