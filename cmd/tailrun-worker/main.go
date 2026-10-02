@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
@@ -19,6 +18,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"uuid"
 
 	"github.com/gofrs/flock"
 	"github.com/shirou/gopsutil/v4/disk"
@@ -39,27 +40,18 @@ func (w *slogWriter) Write(p []byte) (n int, err error) {
 type Bytes uint64
 
 type RegisterWorkerRequest struct {
-	Name     string `json:"name"`
-	URL      string `json:"url"`
-	Hostname string `json:"hostname"`
-	CPUCores int    `json:"cpuCores"`
-	OS       string `json:"os"`
-	Memory   *Bytes `json:"memory,omitempty"`
-	Storage  *Bytes `json:"storage,omitempty"`
+	WorkerID uuid.UUID `json:"workerId"`
+	Name     string    `json:"name"`
+	URL      string    `json:"url"`
+	Hostname string    `json:"hostname"`
+	CPUCores int       `json:"cpuCores"`
+	OS       string    `json:"os"`
+	Memory   *Bytes    `json:"memory,omitempty"`
+	Storage  *Bytes    `json:"storage,omitempty"`
 }
 
 type RegisterWorkerResponse struct {
 	ID int `json:"id"`
-}
-
-const maxWorkerNameBytes = 64
-
-var workerNameAdjectives = []string{
-	"amber", "brisk", "copper", "crimson", "frosty", "golden", "hidden", "midnight", "quiet", "rotary",
-}
-
-var workerNameNouns = []string{
-	"compass", "circuit", "meadow", "orbit", "telephone", "lantern", "harbor", "pioneer", "workshop", "signal",
 }
 
 func main() {
@@ -98,19 +90,6 @@ func main() {
 	}
 	logger := slog.New(logHandler)
 
-	providedWorkerName := strings.TrimSpace(*workerName)
-	if len(providedWorkerName) > maxWorkerNameBytes {
-		logger.Error("invalid worker name", "error", fmt.Sprintf("name must be at most %d bytes", maxWorkerNameBytes))
-		os.Exit(2)
-	}
-	if providedWorkerName == "" {
-		providedWorkerName = fmt.Sprintf(
-			"%s-%s",
-			workerNameAdjectives[rand.IntN(len(workerNameAdjectives))],
-			workerNameNouns[rand.IntN(len(workerNameNouns))],
-		)
-	}
-
 	tsnetDir := filepath.Join(*dataDir, "tsnet")
 	if err := os.MkdirAll(*dataDir, 0o700); err != nil {
 		logger.Error("failed to create application data directory", "directory", *dataDir, "error", err)
@@ -147,8 +126,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	state, err := OpenWorkerState(*dataDir, *workerName)
+	if err != nil {
+		logger.Error("failed to load worker state", "file", filepath.Join(*dataDir, workerStateFilename), "error", err)
+		os.Exit(1)
+	}
+
 	var ln net.Listener
-	var err error
 
 	if *localMode {
 		ln, err = net.Listen("tcp", *listenAddr)
@@ -205,7 +189,7 @@ func main() {
 	}()
 
 	workerURL := fmt.Sprintf("http://%s", ln.Addr().String())
-	err = registerWorker(*controllerURL, workerURL, providedWorkerName, logger)
+	err = registerWorker(*controllerURL, workerURL, state.WorkerID, state.Name, logger)
 	if err != nil {
 		logger.Error("failed to register tailrun-worker", "error", err)
 		os.Exit(1)
@@ -229,7 +213,7 @@ func main() {
 	logger.Info("tailrun-worker shutdown complete")
 }
 
-func registerWorker(controllerURL, workerURL, workerName string, logger *slog.Logger) error {
+func registerWorker(controllerURL, workerURL string, workerID uuid.UUID, workerName string, logger *slog.Logger) error {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return fmt.Errorf("failed to get hostname: %w", err)
@@ -252,6 +236,7 @@ func registerWorker(controllerURL, workerURL, workerName string, logger *slog.Lo
 	}
 
 	reqBody := RegisterWorkerRequest{
+		WorkerID: workerID,
 		Name:     workerName,
 		URL:      workerURL,
 		Hostname: hostname,
@@ -266,7 +251,7 @@ func registerWorker(controllerURL, workerURL, workerName string, logger *slog.Lo
 		return fmt.Errorf("failed to marshal registration request: %w", err)
 	}
 
-	logger.Info("registering worker with controller", "controller", controllerURL, "url", workerURL, "name", workerName)
+	logger.Info("registering worker with controller", "controller", controllerURL, "url", workerURL, "worker_id", workerID, "name", workerName)
 
 	req, err := http.NewRequest(http.MethodPost, controllerURL+"/api/workers", bytes.NewReader(body))
 	if err != nil {
