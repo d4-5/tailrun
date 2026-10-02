@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/n9cw/tailrun/internal/pool"
 )
@@ -56,7 +55,7 @@ type WorkerHandler struct {
 	workers Workers
 }
 
-const maxWorkerNameCharacters = 64
+const maxWorkerNameBytes = 64
 
 func NewWorkerHandler(workers Workers) *WorkerHandler {
 	return &WorkerHandler{workers: workers}
@@ -81,8 +80,8 @@ func (h *WorkerHandler) HandleRegisterWorker(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if utf8.RuneCountInString(req.Name) > maxWorkerNameCharacters {
-		writeError(w, http.StatusBadRequest, "name must be at most 64 characters")
+	if len(req.Name) > maxWorkerNameBytes {
+		writeError(w, http.StatusBadRequest, "name must be at most 64 bytes")
 		return
 	}
 	if req.URL == "" {

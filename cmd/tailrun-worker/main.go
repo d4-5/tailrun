@@ -19,7 +19,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gofrs/flock"
 	"github.com/shirou/gopsutil/v4/disk"
@@ -53,7 +52,7 @@ type RegisterWorkerResponse struct {
 	ID int `json:"id"`
 }
 
-const maxWorkerNameCharacters = 64
+const maxWorkerNameBytes = 64
 
 var workerNameAdjectives = []string{
 	"amber", "brisk", "copper", "crimson", "frosty", "golden", "hidden", "midnight", "quiet", "rotary",
@@ -100,8 +99,8 @@ func main() {
 	logger := slog.New(logHandler)
 
 	providedWorkerName := strings.TrimSpace(*workerName)
-	if utf8.RuneCountInString(providedWorkerName) > maxWorkerNameCharacters {
-		logger.Error("invalid worker name", "error", fmt.Sprintf("name must be at most %d characters", maxWorkerNameCharacters))
+	if len(providedWorkerName) > maxWorkerNameBytes {
+		logger.Error("invalid worker name", "error", fmt.Sprintf("name must be at most %d bytes", maxWorkerNameBytes))
 		os.Exit(2)
 	}
 	if providedWorkerName == "" {
