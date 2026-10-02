@@ -22,6 +22,7 @@ type WorkerUpdatedEvent struct {
 
 type WorkerRegisteredEvent struct {
 	ID       int    `json:"id"`
+	Name     string `json:"name"`
 	URL      string `json:"url"`
 	Hostname string `json:"hostname"`
 	Status   string `json:"status"`
@@ -89,6 +90,7 @@ type ResourceUsageInfo struct {
 
 type worker struct {
 	id       int
+	name     string
 	url      string
 	hostname string
 	status   WorkerStatus
@@ -108,6 +110,7 @@ type worker struct {
 }
 
 type NewWorker struct {
+	Name     string
 	URL      string
 	Hostname string
 	CPUCores int
@@ -118,6 +121,7 @@ type NewWorker struct {
 
 type WorkerInfo struct {
 	ID       int
+	Name     string
 	URL      string
 	Hostname string
 	Status   WorkerStatus

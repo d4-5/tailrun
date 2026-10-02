@@ -110,6 +110,7 @@ func (p *Pool) handleAddWorker(r addWorkerReq) {
 	p.nextID++
 	w := &worker{
 		id:         id,
+		name:       r.info.Name,
 		url:        r.info.URL,
 		hostname:   r.info.Hostname,
 		status:     Available,
@@ -124,6 +125,7 @@ func (p *Pool) handleAddWorker(r addWorkerReq) {
 
 	p.broker.Publish(EventWorkerRegistered, WorkerRegisteredEvent{
 		ID:       w.id,
+		Name:     w.name,
 		URL:      w.url,
 		Hostname: w.hostname,
 		Status:   w.status.String(),
@@ -142,6 +144,7 @@ func (p *Pool) handleGetWorkers(r getWorkersReq) {
 	for _, w := range p.workers {
 		infos = append(infos, WorkerInfo{
 			ID:       w.id,
+			Name:     w.name,
 			URL:      w.url,
 			Hostname: w.hostname,
 			Status:   w.status,
@@ -163,6 +166,7 @@ func (p *Pool) handleGetWorker(r getWorkerReq) {
 	r.reply <- getWorkerResult{
 		info: WorkerInfo{
 			ID:       w.id,
+			Name:     w.name,
 			URL:      w.url,
 			Hostname: w.hostname,
 			Status:   w.status,

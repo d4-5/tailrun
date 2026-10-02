@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/n9cw/tailrun/internal/pool"
 )
@@ -18,6 +20,7 @@ type Workers interface {
 }
 
 type RegisterWorkerRequest struct {
+	Name     string      `json:"name"`
 	URL      string      `json:"url"`
 	Hostname string      `json:"hostname"`
 	CPUCores int         `json:"cpuCores"`
@@ -32,6 +35,7 @@ type RegisterWorkerResponse struct {
 
 type WorkerResponse struct {
 	ID       int         `json:"id"`
+	Name     string      `json:"name"`
 	URL      string      `json:"url"`
 	Hostname string      `json:"hostname"`
 	Status   string      `json:"status"`
@@ -52,6 +56,8 @@ type WorkerHandler struct {
 	workers Workers
 }
 
+const maxWorkerNameCharacters = 64
+
 func NewWorkerHandler(workers Workers) *WorkerHandler {
 	return &WorkerHandler{workers: workers}
 }
@@ -70,6 +76,15 @@ func (h *WorkerHandler) HandleRegisterWorker(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if utf8.RuneCountInString(req.Name) > maxWorkerNameCharacters {
+		writeError(w, http.StatusBadRequest, "name must be at most 64 characters")
+		return
+	}
 	if req.URL == "" {
 		writeError(w, http.StatusBadRequest, "url is required")
 		return
@@ -96,6 +111,7 @@ func (h *WorkerHandler) HandleRegisterWorker(w http.ResponseWriter, r *http.Requ
 	}
 
 	id := h.workers.AddWorker(pool.NewWorker{
+		Name:     req.Name,
 		URL:      req.URL,
 		Hostname: req.Hostname,
 		CPUCores: req.CPUCores,
@@ -114,6 +130,7 @@ func (h *WorkerHandler) HandleGetWorkers(w http.ResponseWriter, r *http.Request)
 	for _, worker := range workers {
 		wr := WorkerResponse{
 			ID:       worker.ID,
+			Name:     worker.Name,
 			URL:      worker.URL,
 			Hostname: worker.Hostname,
 			Status:   worker.Status.String(),
@@ -147,6 +164,7 @@ func (h *WorkerHandler) HandleGetWorker(w http.ResponseWriter, r *http.Request) 
 
 	wr := WorkerResponse{
 		ID:       worker.ID,
+		Name:     worker.Name,
 		URL:      worker.URL,
 		Hostname: worker.Hostname,
 		Status:   worker.Status.String(),

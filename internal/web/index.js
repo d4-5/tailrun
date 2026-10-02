@@ -54,6 +54,10 @@
     return String(s ?? "").replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
   }
 
+  function workerDisplayName(worker){
+    return worker?.name || worker?.hostname || "";
+  }
+
   function coreGrid(cores, big){
     cores = Math.max(1, Math.min(64, cores || 1));
     const cols = big ? Math.min(16, cores) : 8;
@@ -172,7 +176,7 @@
     el.innerHTML = cache.workers.map(w => `
       <button class="worker-card" data-worker-id="${w.id}">
         <span class="led ${ledClass(w.status)}"></span>
-        <div class="host">${escapeHtml(w.hostname)}</div>
+        <div class="host">${escapeHtml(workerDisplayName(w))}</div>
         <div class="os">${escapeHtml(w.os)}</div>
         ${coreGrid(w.cpuCores, false)}
         <div class="specs">
@@ -234,7 +238,7 @@
               <td>${badge(t.status)}</td>
               <td class="worker-link">${
                 t.workerId != null
-                  ? `<a href="#/workers/${t.workerId}">${escapeHtml(workerById[t.workerId]?.hostname || ("#" + t.workerId))}</a>`
+                  ? `<a href="#/workers/${t.workerId}">${escapeHtml(workerDisplayName(workerById[t.workerId]) || ("#" + t.workerId))}</a>`
                   : `<span style="color:var(--text-faint)">—</span>`
               }</td>
               <td>
@@ -285,8 +289,8 @@
       <div class="back-link" id="backLink">← back to dashboard</div>
       <div class="detail-head">
         <div>
-          <h1>${escapeHtml(worker.hostname)}</h1>
-          <div class="url">${escapeHtml(worker.url)}</div>
+          <h1>${escapeHtml(workerDisplayName(worker))}</h1>
+          <div class="url">${escapeHtml(worker.hostname)} · ${escapeHtml(worker.url)}</div>
         </div>
         <span class="badge ${ledClass(worker.status)}">
           <i></i>${escapeHtml(worker.status)}
@@ -407,7 +411,7 @@
 
       const workerById = Object.fromEntries(cache.workers.map(w => [w.id, w]));
       const workerVal = task.workerId != null
-        ? (workerById[task.workerId]?.hostname || ("#" + task.workerId))
+        ? (workerDisplayName(workerById[task.workerId]) || ("#" + task.workerId))
         : "Unassigned";
       document.getElementById("detailsTaskWorker").textContent = workerVal;
 
@@ -601,7 +605,7 @@
             }
             const workerById = Object.fromEntries(cache.workers.map(w => [w.id, w]));
             const updatedWorkerVal = task.workerId != null
-              ? (workerById[task.workerId]?.hostname || ("#" + task.workerId))
+              ? (workerDisplayName(workerById[task.workerId]) || ("#" + task.workerId))
               : "Unassigned";
             document.getElementById("detailsTaskWorker").textContent = updatedWorkerVal;
           }

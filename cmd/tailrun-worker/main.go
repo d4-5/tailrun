@@ -19,6 +19,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gofrs/flock"
 	"github.com/shirou/gopsutil/v4/disk"
@@ -51,6 +52,8 @@ type RegisterWorkerRequest struct {
 type RegisterWorkerResponse struct {
 	ID int `json:"id"`
 }
+
+const maxWorkerNameCharacters = 64
 
 var workerNameAdjectives = []string{
 	"amber", "brisk", "copper", "crimson", "frosty", "golden", "hidden", "midnight", "quiet", "rotary",
@@ -95,6 +98,19 @@ func main() {
 		os.Exit(2)
 	}
 	logger := slog.New(logHandler)
+
+	providedWorkerName := strings.TrimSpace(*workerName)
+	if utf8.RuneCountInString(providedWorkerName) > maxWorkerNameCharacters {
+		logger.Error("invalid worker name", "error", fmt.Sprintf("name must be at most %d characters", maxWorkerNameCharacters))
+		os.Exit(2)
+	}
+	if providedWorkerName == "" {
+		providedWorkerName = fmt.Sprintf(
+			"%s-%s",
+			workerNameAdjectives[rand.IntN(len(workerNameAdjectives))],
+			workerNameNouns[rand.IntN(len(workerNameNouns))],
+		)
+	}
 
 	tsnetDir := filepath.Join(*dataDir, "tsnet")
 	if err := os.MkdirAll(*dataDir, 0o700); err != nil {
@@ -190,15 +206,7 @@ func main() {
 	}()
 
 	workerURL := fmt.Sprintf("http://%s", ln.Addr().String())
-	resolvedWorkerName := strings.TrimSpace(*workerName)
-	if resolvedWorkerName == "" {
-		resolvedWorkerName = fmt.Sprintf(
-			"%s-%s",
-			workerNameAdjectives[rand.IntN(len(workerNameAdjectives))],
-			workerNameNouns[rand.IntN(len(workerNameNouns))],
-		)
-	}
-	err = registerWorker(*controllerURL, workerURL, resolvedWorkerName, logger)
+	err = registerWorker(*controllerURL, workerURL, providedWorkerName, logger)
 	if err != nil {
 		logger.Error("failed to register tailrun-worker", "error", err)
 		os.Exit(1)
