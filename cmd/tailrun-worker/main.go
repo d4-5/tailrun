@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
@@ -38,6 +39,7 @@ func (w *slogWriter) Write(p []byte) (n int, err error) {
 type Bytes uint64
 
 type RegisterWorkerRequest struct {
+	Name     string `json:"name"`
 	URL      string `json:"url"`
 	Hostname string `json:"hostname"`
 	CPUCores int    `json:"cpuCores"`
@@ -50,9 +52,18 @@ type RegisterWorkerResponse struct {
 	ID int `json:"id"`
 }
 
+var workerNameAdjectives = []string{
+	"amber", "brisk", "copper", "crimson", "frosty", "golden", "hidden", "midnight", "quiet", "rotary",
+}
+
+var workerNameNouns = []string{
+	"compass", "circuit", "meadow", "orbit", "telephone", "lantern", "harbor", "pioneer", "workshop", "signal",
+}
+
 func main() {
 	authKey := flag.String("auth-key", "", "Tailscale auth key used to join the tailnet")
 	controllerURL := flag.String("controller-url", "", "Controller URL")
+	workerName := flag.String("name", "", "Human-friendly display name for this worker")
 	configDir, configErr := os.UserConfigDir()
 	if configErr != nil {
 		fmt.Fprintf(os.Stderr, "failed to determine user config directory: %v\n", configErr)
@@ -179,7 +190,15 @@ func main() {
 	}()
 
 	workerURL := fmt.Sprintf("http://%s", ln.Addr().String())
-	err = registerWorker(*controllerURL, workerURL, logger)
+	resolvedWorkerName := strings.TrimSpace(*workerName)
+	if resolvedWorkerName == "" {
+		resolvedWorkerName = fmt.Sprintf(
+			"%s-%s",
+			workerNameAdjectives[rand.IntN(len(workerNameAdjectives))],
+			workerNameNouns[rand.IntN(len(workerNameNouns))],
+		)
+	}
+	err = registerWorker(*controllerURL, workerURL, resolvedWorkerName, logger)
 	if err != nil {
 		logger.Error("failed to register tailrun-worker", "error", err)
 		os.Exit(1)
@@ -203,7 +222,7 @@ func main() {
 	logger.Info("tailrun-worker shutdown complete")
 }
 
-func registerWorker(controllerURL, workerURL string, logger *slog.Logger) error {
+func registerWorker(controllerURL, workerURL, workerName string, logger *slog.Logger) error {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return fmt.Errorf("failed to get hostname: %w", err)
@@ -226,6 +245,7 @@ func registerWorker(controllerURL, workerURL string, logger *slog.Logger) error 
 	}
 
 	reqBody := RegisterWorkerRequest{
+		Name:     workerName,
 		URL:      workerURL,
 		Hostname: hostname,
 		CPUCores: runtime.NumCPU(),
@@ -239,7 +259,7 @@ func registerWorker(controllerURL, workerURL string, logger *slog.Logger) error 
 		return fmt.Errorf("failed to marshal registration request: %w", err)
 	}
 
-	logger.Info("registering worker with controller", "controller", controllerURL, "url", workerURL)
+	logger.Info("registering worker with controller", "controller", controllerURL, "url", workerURL, "name", workerName)
 
 	req, err := http.NewRequest(http.MethodPost, controllerURL+"/api/workers", bytes.NewReader(body))
 	if err != nil {
