@@ -110,12 +110,7 @@ func (p *Pool) handleGetResourceUsage(r getResourceUsageReq) {
 
 	usage := make([]ResourceUsageInfo, len(w.resourceUsage))
 	for i, sample := range w.resourceUsage {
-		usage[i] = ResourceUsageInfo{
-			Timestamp:       sample.Timestamp,
-			CPUUsagePercent: sample.CPUUsagePercent,
-			MemoryUsed:      sample.MemoryUsed,
-			StorageUsed:     sample.StorageUsed,
-		}
+		usage[i] = ResourceUsageInfo(sample)
 	}
 	r.reply <- getResourceUsageResult{usage: usage}
 }

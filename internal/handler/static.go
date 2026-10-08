@@ -4,7 +4,7 @@ import (
 	"io/fs"
 	"net/http"
 
-	"github.com/n9cw/tailrun/internal/web"
+	"github.com/d4-5/tailrun/internal/web"
 )
 
 type StaticHandler struct {

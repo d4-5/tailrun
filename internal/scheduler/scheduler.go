@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"uuid"
 
-	"github.com/n9cw/tailrun/internal/pool"
+	"github.com/d4-5/tailrun/internal/pool"
 )
 
 const channelBufferSize = 50

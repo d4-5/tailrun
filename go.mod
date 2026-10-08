@@ -1,4 +1,4 @@
-module github.com/n9cw/tailrun
+module github.com/d4-5/tailrun
 
 go 1.27.1
 

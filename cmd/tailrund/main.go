@@ -19,10 +19,10 @@ import (
 	"github.com/gofrs/flock"
 	"tailscale.com/tsnet"
 
-	"github.com/n9cw/tailrun/internal/broker"
-	"github.com/n9cw/tailrun/internal/handler"
-	"github.com/n9cw/tailrun/internal/pool"
-	"github.com/n9cw/tailrun/internal/scheduler"
+	"github.com/d4-5/tailrun/internal/broker"
+	"github.com/d4-5/tailrun/internal/handler"
+	"github.com/d4-5/tailrun/internal/pool"
+	"github.com/d4-5/tailrun/internal/scheduler"
 )
 
 type slogWriter struct {

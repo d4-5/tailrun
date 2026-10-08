@@ -8,7 +8,7 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/n9cw/tailrun/internal/pool"
+	"github.com/d4-5/tailrun/internal/pool"
 )
 
 type Workers interface {

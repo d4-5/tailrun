@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"uuid"
 
-	"github.com/n9cw/tailrun/internal/scheduler"
+	"github.com/d4-5/tailrun/internal/scheduler"
 )
 
 type Schedule interface {
